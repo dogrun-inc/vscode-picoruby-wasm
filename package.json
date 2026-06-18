@@ -7,17 +7,28 @@
     "vscode": "^1.74.0"
   },
   "categories": [
+    "Programming Languages",
     "Other"
   ],
-  "activationEvents": [
-    "onCommand:picoruby-wasm.helloWorld"
-  ],
+  "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "picoruby",
+        "aliases": ["PicoRuby", "picoruby"],
+        "extensions": [],
+        "configuration": "./language-configuration.json"
+      }
+    ],
     "commands": [
       {
-        "command": "picoruby-wasm.helloWorld",
-        "title": "Hello World"
+        "command": "picoruby.enable",
+        "title": "Enable PicoRuby for this workspace (.rb → picoruby)"
+      },
+      {
+        "command": "picoruby.disable",
+        "title": "Disable PicoRuby for this workspace (.rb → ruby)"
       }
     ]
   },

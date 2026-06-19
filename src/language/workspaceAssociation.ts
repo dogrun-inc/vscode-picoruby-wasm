@@ -1,5 +1,75 @@
 import * as vscode from 'vscode';
 
+type Associations = Record<string, string>;
+type AssociationTarget = 'workspace' | 'workspaceFolder';
+
+interface AssociationContext {
+    target: AssociationTarget;
+    associations: Associations;
+}
+
+interface AssociationInspectValues {
+    workspaceValue?: Associations;
+    workspaceFolderValue?: Associations;
+}
+
+export function withPicoRubyAssociation(associations: Associations): Associations {
+    return { ...associations, '*.rb': 'picoruby' };
+}
+
+export function withoutPicoRubyAssociation(
+    associations: Associations
+): Associations | undefined {
+    const next = { ...associations };
+    delete next['*.rb'];
+
+    return Object.keys(next).length > 0 ? next : undefined;
+}
+
+export function resolveAssociationContext(
+    values: AssociationInspectValues,
+    hasWorkspaceFile: boolean,
+    hasWorkspaceFolders: boolean
+): AssociationContext {
+    if (hasWorkspaceFile) {
+        return {
+            target: 'workspace',
+            associations: values.workspaceValue ?? {}
+        };
+    }
+
+    if (hasWorkspaceFolders) {
+        return {
+            target: 'workspaceFolder',
+            associations: values.workspaceFolderValue ?? {}
+        };
+    }
+
+    return {
+        target: 'workspace',
+        associations: values.workspaceValue ?? {}
+    };
+}
+
+function toConfigurationTarget(target: AssociationTarget): vscode.ConfigurationTarget {
+    return target === 'workspaceFolder'
+        ? vscode.ConfigurationTarget.WorkspaceFolder
+        : vscode.ConfigurationTarget.Workspace;
+}
+
+function getAssociationContext(config: vscode.WorkspaceConfiguration): AssociationContext {
+    const inspected = config.inspect<Associations>('files.associations');
+
+    return resolveAssociationContext(
+        {
+            workspaceValue: inspected?.workspaceValue,
+            workspaceFolderValue: inspected?.workspaceFolderValue
+        },
+        Boolean(vscode.workspace.workspaceFile),
+        Boolean(vscode.workspace.workspaceFolders?.length)
+    );
+}
+
 /**
  * ワークスペースの .vscode/settings.json に
  * "files.associations": { "*.rb": "picoruby" } を追記する。
@@ -7,9 +77,8 @@ import * as vscode from 'vscode';
  */
 export async function enablePicoRuby(): Promise<void> {
     const config = vscode.workspace.getConfiguration();
-    const associations: Record<string, string> =
-        config.inspect<Record<string, string>>('files.associations')
-            ?.workspaceValue ?? {};
+    const context = getAssociationContext(config);
+    const associations = context.associations;
 
     if (associations['*.rb'] === 'picoruby') {
         vscode.window.showInformationMessage(
@@ -20,8 +89,8 @@ export async function enablePicoRuby(): Promise<void> {
 
     await config.update(
         'files.associations',
-        { ...associations, '*.rb': 'picoruby' },
-        vscode.ConfigurationTarget.Workspace
+        withPicoRubyAssociation(associations),
+        toConfigurationTarget(context.target)
     );
 
     vscode.window.showInformationMessage(
@@ -36,9 +105,8 @@ export async function enablePicoRuby(): Promise<void> {
  */
 export async function disablePicoRuby(): Promise<void> {
     const config = vscode.workspace.getConfiguration();
-    const associations: Record<string, string> =
-        config.inspect<Record<string, string>>('files.associations')
-            ?.workspaceValue ?? {};
+    const context = getAssociationContext(config);
+    const associations = context.associations;
 
     if (associations['*.rb'] !== 'picoruby') {
         vscode.window.showInformationMessage(
@@ -47,13 +115,10 @@ export async function disablePicoRuby(): Promise<void> {
         return;
     }
 
-    const next = { ...associations };
-    delete next['*.rb'];
-
     await config.update(
         'files.associations',
-        Object.keys(next).length > 0 ? next : undefined,
-        vscode.ConfigurationTarget.Workspace
+        withoutPicoRubyAssociation(associations),
+        toConfigurationTarget(context.target)
     );
 
     vscode.window.showInformationMessage(

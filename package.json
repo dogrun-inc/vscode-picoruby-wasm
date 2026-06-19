@@ -10,7 +10,10 @@
     "Programming Languages",
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:picoruby.enable",
+    "onCommand:picoruby.disable"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
@@ -28,7 +31,7 @@
       },
       {
         "command": "picoruby.disable",
-        "title": "Disable PicoRuby for this workspace (.rb → ruby)"
+        "title": "Disable PicoRuby for this workspace (remove .rb mapping)"
       }
     ]
   },

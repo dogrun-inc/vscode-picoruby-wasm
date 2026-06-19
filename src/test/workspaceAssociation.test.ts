@@ -1,41 +1,16 @@
 import * as assert from 'assert';
 
 import {
-	resolveAssociationContext,
 	withPicoRubyAssociation,
 	withoutPicoRubyAssociation
 } from '../language/workspaceAssociation';
 
 suite('workspaceAssociation helpers', () => {
-	test('resolveAssociationContext uses Workspace for multi-root workspace file', () => {
-		const result = resolveAssociationContext(
-			{
-				workspaceValue: { '*.rb': 'picoruby' },
-				workspaceFolderValue: { '*.rb': 'ruby' }
-			},
-			true,
-			true
-		);
+	// withPicoRubyAssociation
+	test('withPicoRubyAssociation adds *.rb mapping to empty associations', () => {
+		const result = withPicoRubyAssociation({});
 
-		assert.strictEqual(result.target, 'workspace');
-		assert.deepStrictEqual(result.associations, { '*.rb': 'picoruby' });
-	});
-
-	test('resolveAssociationContext uses WorkspaceFolder for single-folder workspace', () => {
-		const result = resolveAssociationContext(
-			{
-				workspaceValue: { '*.rb': 'ruby' },
-				workspaceFolderValue: { '*.rb': 'picoruby', '*.rake': 'ruby' }
-			},
-			false,
-			true
-		);
-
-		assert.strictEqual(result.target, 'workspaceFolder');
-		assert.deepStrictEqual(result.associations, {
-			'*.rb': 'picoruby',
-			'*.rake': 'ruby'
-		});
+		assert.deepStrictEqual(result, { '*.rb': 'picoruby' });
 	});
 
 	test('withPicoRubyAssociation merges while preserving existing keys', () => {
@@ -47,6 +22,14 @@ suite('workspaceAssociation helpers', () => {
 		});
 	});
 
+	test('withPicoRubyAssociation does not mutate the original object', () => {
+		const original = { '*.rake': 'ruby' };
+		withPicoRubyAssociation(original);
+
+		assert.deepStrictEqual(original, { '*.rake': 'ruby' });
+	});
+
+	// withoutPicoRubyAssociation
 	test('withoutPicoRubyAssociation removes only *.rb mapping', () => {
 		const result = withoutPicoRubyAssociation({ '*.rb': 'picoruby', '*.rake': 'ruby' });
 
@@ -57,5 +40,12 @@ suite('workspaceAssociation helpers', () => {
 		const result = withoutPicoRubyAssociation({ '*.rb': 'picoruby' });
 
 		assert.strictEqual(result, undefined);
+	});
+
+	test('withoutPicoRubyAssociation does not mutate the original object', () => {
+		const original = { '*.rb': 'picoruby', '*.rake': 'ruby' };
+		withoutPicoRubyAssociation(original);
+
+		assert.deepStrictEqual(original, { '*.rb': 'picoruby', '*.rake': 'ruby' });
 	});
 });

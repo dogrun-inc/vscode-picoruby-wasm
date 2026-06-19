@@ -1,17 +1,6 @@
 import * as vscode from 'vscode';
 
 type Associations = Record<string, string>;
-type AssociationTarget = 'workspace' | 'workspaceFolder';
-
-interface AssociationContext {
-    target: AssociationTarget;
-    associations: Associations;
-}
-
-interface AssociationInspectValues {
-    workspaceValue?: Associations;
-    workspaceFolderValue?: Associations;
-}
 
 export function withPicoRubyAssociation(associations: Associations): Associations {
     return { ...associations, '*.rb': 'picoruby' };
@@ -26,47 +15,10 @@ export function withoutPicoRubyAssociation(
     return Object.keys(next).length > 0 ? next : undefined;
 }
 
-export function resolveAssociationContext(
-    values: AssociationInspectValues,
-    hasWorkspaceFile: boolean,
-    hasWorkspaceFolders: boolean
-): AssociationContext {
-    if (hasWorkspaceFile) {
-        return {
-            target: 'workspace',
-            associations: values.workspaceValue ?? {}
-        };
-    }
-
-    if (hasWorkspaceFolders) {
-        return {
-            target: 'workspaceFolder',
-            associations: values.workspaceFolderValue ?? {}
-        };
-    }
-
-    return {
-        target: 'workspace',
-        associations: values.workspaceValue ?? {}
-    };
-}
-
-function toConfigurationTarget(target: AssociationTarget): vscode.ConfigurationTarget {
-    return target === 'workspaceFolder'
-        ? vscode.ConfigurationTarget.WorkspaceFolder
-        : vscode.ConfigurationTarget.Workspace;
-}
-
-function getAssociationContext(config: vscode.WorkspaceConfiguration): AssociationContext {
-    const inspected = config.inspect<Associations>('files.associations');
-
-    return resolveAssociationContext(
-        {
-            workspaceValue: inspected?.workspaceValue,
-            workspaceFolderValue: inspected?.workspaceFolderValue
-        },
-        Boolean(vscode.workspace.workspaceFile),
-        Boolean(vscode.workspace.workspaceFolders?.length)
+export function isWorkspaceOpen(): boolean {
+    return Boolean(
+        vscode.workspace.workspaceFolders?.length ||
+        vscode.workspace.workspaceFile
     );
 }
 
@@ -74,11 +26,20 @@ function getAssociationContext(config: vscode.WorkspaceConfiguration): Associati
  * ワークスペースの .vscode/settings.json に
  * "files.associations": { "*.rb": "picoruby" } を追記する。
  * 既存の設定はマージされ、上書き/削除しない。
+ * 単一フォルダ・マルチルートいずれも ConfigurationTarget.Workspace を使用する
+ * （単一フォルダの .vscode/settings.json は workspaceValue として格納される）。
  */
 export async function enablePicoRuby(): Promise<void> {
+    if (!isWorkspaceOpen()) {
+        vscode.window.showErrorMessage(
+            'PicoRuby: No folder or workspace is open. Open a folder first, then run this command.'
+        );
+        return;
+    }
+
     const config = vscode.workspace.getConfiguration();
-    const context = getAssociationContext(config);
-    const associations = context.associations;
+    const associations: Associations =
+        config.inspect<Associations>('files.associations')?.workspaceValue ?? {};
 
     if (associations['*.rb'] === 'picoruby') {
         vscode.window.showInformationMessage(
@@ -90,7 +51,7 @@ export async function enablePicoRuby(): Promise<void> {
     await config.update(
         'files.associations',
         withPicoRubyAssociation(associations),
-        toConfigurationTarget(context.target)
+        vscode.ConfigurationTarget.Workspace
     );
 
     vscode.window.showInformationMessage(
@@ -104,9 +65,16 @@ export async function enablePicoRuby(): Promise<void> {
  * その他の files.associations は変更しない。
  */
 export async function disablePicoRuby(): Promise<void> {
+    if (!isWorkspaceOpen()) {
+        vscode.window.showErrorMessage(
+            'PicoRuby: No folder or workspace is open. Open a folder first, then run this command.'
+        );
+        return;
+    }
+
     const config = vscode.workspace.getConfiguration();
-    const context = getAssociationContext(config);
-    const associations = context.associations;
+    const associations: Associations =
+        config.inspect<Associations>('files.associations')?.workspaceValue ?? {};
 
     if (associations['*.rb'] !== 'picoruby') {
         vscode.window.showInformationMessage(
@@ -118,7 +86,7 @@ export async function disablePicoRuby(): Promise<void> {
     await config.update(
         'files.associations',
         withoutPicoRubyAssociation(associations),
-        toConfigurationTarget(context.target)
+        vscode.ConfigurationTarget.Workspace
     );
 
     vscode.window.showInformationMessage(

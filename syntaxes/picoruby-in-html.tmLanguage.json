@@ -1,0 +1,29 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "PicoRuby in HTML",
+  "scopeName": "text.html.picoruby.injection",
+  "injectionSelector": "L:text.html -comment -string",
+  "patterns": [
+    {
+      "name": "meta.embedded.block.picoruby.html",
+      "begin": "(<script\\b[^>]*\\btype\\s*=\\s*[\"']text/ruby[\"'][^>]*>)",
+      "beginCaptures": {
+        "1": {
+          "name": "meta.tag.script.begin.html"
+        }
+      },
+      "end": "(</script\\s*>)",
+      "endCaptures": {
+        "1": {
+          "name": "meta.tag.script.end.html"
+        }
+      },
+      "contentName": "meta.embedded.block.picoruby",
+      "patterns": [
+        {
+          "include": "source.picoruby"
+        }
+      ]
+    }
+  ]
+}

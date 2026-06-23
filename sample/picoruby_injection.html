@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>PicoRuby in HTML</title>
+  </head>
+  <body>
+    <h1>Injection Test</h1>
+    <script type="text/ruby">
+      class App
+        def call
+          puts "hello from picoruby in html"
+        end
+      end
+
+      App.new.call
+    </script>
+
+    <script>
+      // 通常JavaScript側。ここは既存のHTML/JSハイライトのまま
+      console.log("normal js block");
+    </script>
+  </body>
+</html>

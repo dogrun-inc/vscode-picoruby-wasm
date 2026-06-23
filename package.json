@@ -24,6 +24,21 @@
         "configuration": "./language-configuration.json"
       }
     ],
+    "grammars": [
+      {
+        "language": "picoruby",
+        "scopeName": "source.picoruby",
+        "path": "./syntaxes/picoruby.tmLanguage.json"
+      },
+      {
+        "scopeName": "text.html.picoruby.injection",
+        "path": "./syntaxes/picoruby-in-html.tmLanguage.json",
+        "injectTo": ["text.html.basic", "text.html.derivative"],
+        "embeddedLanguages": {
+          "meta.embedded.block.picoruby": "picoruby"
+        }
+      }
+    ],
     "commands": [
       {
         "command": "picoruby.enable",

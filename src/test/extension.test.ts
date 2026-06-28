@@ -56,6 +56,20 @@ suite('Extension Test Suite', () => {
 		);
 	});
 
+	test('package.json activates on picoruby language', () => {
+		const pkg = readJson('package.json');
+		const activationEvents = pkg.activationEvents as string[];
+
+		assert.ok(
+			Array.isArray(activationEvents),
+			'activationEvents must be an array'
+		);
+		assert.ok(
+			activationEvents.includes('onLanguage:picoruby'),
+			'extension must activate for picoruby documents'
+		);
+	});
+
 	test('picoruby base grammar structure is valid', () => {
 		const grammar = readJson('syntaxes/picoruby.tmLanguage.json');
 

@@ -52,3 +52,14 @@ export const PICORUBY_BUILTIN_CONSTANTS = [
 	'FALSE',
 	'NIL'
 ] as const;
+
+export const PICORUBY_MODULE_FUNCTIONS = [
+	'require',
+	'load',
+	'sleep',
+	'pin_mode',
+	'digital_write',
+	'digital_read',
+	'analog_read',
+	'pwm_write'
+] as const;

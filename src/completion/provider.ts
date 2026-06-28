@@ -83,16 +83,22 @@ function contextItems(linePrefix: string): vscode.CompletionItem[] {
 	return [...classItems(), ...methodItems()];
 }
 
+export function providePicoRubyCompletionsForLine(
+	linePrefix: string
+): vscode.CompletionItem[] {
+	const snippetItems = lineHeadSnippetItems(linePrefix);
+	const regularItems = contextItems(linePrefix);
+
+	return [...snippetItems, ...regularItems];
+}
+
 export function registerPicoRubyCompletionProvider(): vscode.Disposable {
 	const provider: vscode.CompletionItemProvider = {
 		provideCompletionItems(document, position) {
 			const range = new vscode.Range(position.with(undefined, 0), position);
 			const linePrefix = document.getText(range);
 
-			const snippetItems = lineHeadSnippetItems(linePrefix);
-			const regularItems = contextItems(linePrefix);
-
-			return [...snippetItems, ...regularItems];
+			return providePicoRubyCompletionsForLine(linePrefix);
 		}
 	};
 

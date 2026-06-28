@@ -6,6 +6,9 @@ import {
 	PICORUBY_MODULE_FUNCTIONS
 } from './builtins';
 
+/**
+ * Builds completion items for PicoRuby built-in class names.
+ */
 function classItems(): vscode.CompletionItem[] {
 	return PICORUBY_BUILTIN_CLASSES.map((name) => {
 		const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Class);
@@ -15,6 +18,9 @@ function classItems(): vscode.CompletionItem[] {
 	});
 }
 
+/**
+ * Builds completion items for PicoRuby built-in methods.
+ */
 function methodItems(): vscode.CompletionItem[] {
 	return PICORUBY_BUILTIN_METHODS.map((name) => {
 		const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
@@ -24,6 +30,9 @@ function methodItems(): vscode.CompletionItem[] {
 	});
 }
 
+/**
+ * Builds completion items for PicoRuby built-in constants.
+ */
 function constantItems(): vscode.CompletionItem[] {
 	return PICORUBY_BUILTIN_CONSTANTS.map((name) => {
 		const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Constant);
@@ -33,6 +42,9 @@ function constantItems(): vscode.CompletionItem[] {
 	});
 }
 
+/**
+ * Builds completion items for PicoRuby module-level functions.
+ */
 function moduleFunctionItems(): vscode.CompletionItem[] {
 	return PICORUBY_MODULE_FUNCTIONS.map((name) => {
 		const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Function);
@@ -42,6 +54,12 @@ function moduleFunctionItems(): vscode.CompletionItem[] {
 	});
 }
 
+/**
+ * Returns line-head snippet candidates for `def` and `class`.
+ *
+ * Snippets are offered only when the current line prefix is composed of
+ * optional leading spaces plus an identifier fragment.
+ */
 function lineHeadSnippetItems(linePrefix: string): vscode.CompletionItem[] {
 	if (!/^\s*[A-Za-z_]*$/.test(linePrefix)) {
 		return [];
@@ -71,6 +89,13 @@ function lineHeadSnippetItems(linePrefix: string): vscode.CompletionItem[] {
 	return items;
 }
 
+/**
+ * Selects regular completion candidates by simple line-prefix regex matching.
+ *
+ * - `::` context: constants and module functions
+ * - `.` context: methods only
+ * - default: classes and methods
+ */
 function contextItems(linePrefix: string): vscode.CompletionItem[] {
 	if (/::\w*$/.test(linePrefix)) {
 		return [...constantItems(), ...moduleFunctionItems()];
@@ -83,6 +108,10 @@ function contextItems(linePrefix: string): vscode.CompletionItem[] {
 	return [...classItems(), ...methodItems()];
 }
 
+/**
+ * Produces all completion items for a line prefix by merging snippet and
+ * context-aware regular candidates.
+ */
 export function providePicoRubyCompletionsForLine(
 	linePrefix: string
 ): vscode.CompletionItem[] {
@@ -92,8 +121,14 @@ export function providePicoRubyCompletionsForLine(
 	return [...snippetItems, ...regularItems];
 }
 
+/**
+ * Registers the PicoRuby completion provider for the `picoruby` language.
+ */
 export function registerPicoRubyCompletionProvider(): vscode.Disposable {
 	const provider: vscode.CompletionItemProvider = {
+		/**
+		 * Returns completion items for the current cursor position.
+		 */
 		provideCompletionItems(document, position) {
 			const range = new vscode.Range(position.with(undefined, 0), position);
 			const linePrefix = document.getText(range);

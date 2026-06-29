@@ -11,6 +11,7 @@
     "Other"
   ],
   "activationEvents": [
+    "onLanguage:picoruby",
     "onCommand:picoruby.enable",
     "onCommand:picoruby.disable"
   ],

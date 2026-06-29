@@ -101,6 +101,10 @@ function contextItems(linePrefix: string): vscode.CompletionItem[] {
 		return [...constantItems(), ...moduleFunctionItems()];
 	}
 
+	if (/:$/.test(linePrefix) && !/::$/.test(linePrefix)) {
+		return [];
+	}
+
 	if (/\.\w*$/.test(linePrefix)) {
 		return methodItems();
 	}

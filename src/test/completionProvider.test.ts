@@ -27,6 +27,15 @@ suite('completion provider helpers', () => {
 		assert.ok(!names.includes('puts'), ':: context should not include regular methods');
 	});
 
+	test('single-colon context returns no regular candidates', () => {
+		const items = providePicoRubyCompletionsForLine('PicoRuby:');
+		const regularItems = items.filter(
+			(item) => item.kind !== vscode.CompletionItemKind.Snippet
+		);
+
+		assert.strictEqual(regularItems.length, 0);
+	});
+
 	test('dot context returns methods only', () => {
 		const items = providePicoRubyCompletionsForLine('object.');
 		const names = labels(items);

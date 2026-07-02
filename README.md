@@ -1,31 +1,98 @@
 # PicoRuby WASM
 
-This is the initial repository for the VS Code extension "PicoRuby WASM".
+PicoRuby development support for Visual Studio Code.
 
-This project will provide a VS Code extension for working with the PicoRuby WASM runtime.
+This extension currently focuses on:
 
-## Purpose
+- Syntax highlighting for PicoRuby
+- Code completion for PicoRuby built-ins
 
-- Build the extension as a TypeScript-based VS Code project.
-- Enable debug execution and command verification inside VS Code.
-- Add PicoRuby WASM-related features step by step.
+> Debugger support is under active development and is not included in this release yet.
 
-## Development Notes
+## Features
 
-The repository is still in its initial state. The first goal is to scaffold the VS Code extension and make it runnable in debug mode with `F5`.
+### Syntax Highlighting
 
----
+- PicoRuby grammar support
+- Embedded PicoRuby highlighting in HTML through an injection grammar
 
-VS Code 拡張機能「PicoRuby WASM」の初期リポジトリです。
+### Code Completion
 
-このプロジェクトでは、PicoRuby の WASM ランタイムを VS Code から扱える拡張機能を開発します。
+- Built-in classes such as Array, Hash, String, GPIO, UART, and more
+- Built-in methods such as puts, require, pin_mode, and digital_write
+- Built-in constants such as TRUE, FALSE, and NIL
+- Context-aware completion for `::` and `.` access patterns
+- Snippet suggestions for `def` and `class`
 
-## 目的
+## Not Yet Implemented
 
-- TypeScript ベースの VS Code 拡張機能として開発する
-- VS Code 上でデバッグ実行とコマンド確認ができるようにする
-- PicoRuby WASM 関連の機能を段階的に追加する
+- Debugger integration
+- Runtime execution features
 
-## 開発メモ
+If you are interested in debugger support, please watch this repository for updates.
 
-このリポジトリはまだ初期状態です。まずは VS Code 拡張のひな形を作成し、`F5` でデバッグ実行できる状態を目指します。
+- Repository: https://github.com/dogrun-inc/vscode-picoruby-wasm
+- Issues: https://github.com/dogrun-inc/vscode-picoruby-wasm/issues
+
+## Requirements
+
+- Visual Studio Code 1.74.0 or later
+
+## Installation
+
+### From Marketplace
+
+1. Open the Extensions view in VS Code
+2. Search for "PicoRuby WASM"
+3. Click Install
+
+Direct link:
+
+- https://marketplace.visualstudio.com/items?itemName=dogrun-inc.picoruby-wasm
+
+### From VSIX
+
+1. Download the `.vsix` package
+2. In VS Code, run `Extensions: Install from VSIX...`
+3. Select the downloaded file
+
+## Usage
+
+### File Association
+
+This extension provides commands to associate `.rb` files with PicoRuby in your current workspace:
+
+- Enable PicoRuby for this workspace (`.rb` -> `picoruby`)
+- Disable PicoRuby for this workspace (remove the `.rb` mapping)
+
+Open the Command Palette and run either command when needed.
+
+### Completion
+
+Start typing in a PicoRuby file and trigger completion with:
+
+- Ctrl+Space on Windows or Linux
+- Cmd+Space on macOS, depending on system settings
+
+## Release Status
+
+Current release: `v0.1.0` (initial release)
+
+Please report issues and suggestions for:
+
+- Bugs
+- Missing built-ins
+- Highlighting edge cases
+
+## Known Limitations
+
+- Completion is currently focused on built-in and core symbols
+- Full language intelligence and debugger support are not yet available
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
+## License
+
+MIT

@@ -5,6 +5,11 @@ node_modules/
 out/
 dist/
 *.vsix
+*.vsix.sha256
+
+# Allow committed release artifacts only in releases/
+!releases/*.vsix
+!releases/*.vsix.sha256
 
 # Test artifacts
 .vscode-test/

@@ -1,10 +1,27 @@
 {
   "name": "picoruby-wasm",
   "displayName": "PicoRuby WASM",
-  "description": "PicoRuby WASM support for VSCode",
-  "version": "0.0.1",
+  "description": "Syntax highlighting and code completion support for PicoRuby in VS Code",
+  "version": "0.1.0",
+  "publisher": "dogrun-inc",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dogrun-inc/vscode-picoruby-wasm"
+  },
+  "homepage": "https://github.com/dogrun-inc/vscode-picoruby-wasm#readme",
+  "bugs": {
+    "url": "https://github.com/dogrun-inc/vscode-picoruby-wasm/issues"
+  },
+  "keywords": [
+    "picoruby",
+    "ruby",
+    "wasm",
+    "syntax",
+    "completion"
+  ],
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.120.0"
   },
   "categories": [
     "Programming Languages",

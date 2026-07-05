@@ -75,6 +75,7 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	async launch(args: PicoRubyWasmLaunchArguments): Promise<{ output: string }> {
+		this.stopOnEntry = args.stopOnEntry ?? true;
 		this.activeProgram = this.resolveProgramPath(args.program, args.cwd);
 		const result = await this.runtimeClient.launch(args);
 		const outputEvent = result.events.find((event) => event.type === 'output');
@@ -88,6 +89,10 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	markStopped(): boolean {
+		if (!this.stopOnEntry) {
+			return false;
+		}
+
 		if (this.stopped) {
 			return false;
 		}

@@ -392,8 +392,9 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 					type: 'response',
 					seq: this.nextMessageSeq(),
 					request_seq: message.seq,
-					success: true,
-					command: message.command
+					success: false,
+					command: message.command,
+					message: `Unsupported request: ${message.command}`
 				});
 		}
 	}

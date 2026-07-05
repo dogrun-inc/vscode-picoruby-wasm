@@ -29,16 +29,17 @@ export class PicoRubyWasmDebugConfigurationProvider implements vscode.DebugConfi
 			name: 'Launch PicoRuby WASM',
 			type: DEBUG_TYPE,
 			request: 'launch',
-			program: this.getDefaultProgram(folder),
+			program: this.getDefaultProgram(),
+			cwd: this.getDefaultCwd(folder),
 			stopOnEntry: true
 		};
 	}
 
-	private getDefaultProgram(folder: vscode.WorkspaceFolder | undefined): string {
-		if (!folder) {
-			return DEFAULT_PROGRAM;
-		}
-
+	private getDefaultProgram(): string {
 		return './index.html';
+	}
+
+	private getDefaultCwd(folder: vscode.WorkspaceFolder | undefined): string | undefined {
+		return folder?.uri.fsPath;
 	}
 }

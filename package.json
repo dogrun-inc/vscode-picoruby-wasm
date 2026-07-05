@@ -81,7 +81,7 @@
             "properties": {
               "program": {
                 "type": "string",
-                "description": "Path to the PicoRuby source file that the mock debugger should launch."
+                "description": "Path to the HTML entrypoint that the mock debugger should launch."
               },
               "stopOnEntry": {
                 "type": "boolean",

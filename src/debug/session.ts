@@ -58,6 +58,7 @@ export interface PicoRubyWasmLaunchArguments {
 class PicoRubyWasmMockSessionState {
 	private readonly runtimeClient = new PicoRubyWasmRuntimeClient();
 	private stopped = false;
+	private stopOnEntry = true;
 	private activeProgram = path.resolve(process.cwd(), 'index.html');
 
 	createInitializeBody(): PicoRubyWasmInitializeResponseBody {

@@ -108,6 +108,7 @@
             "type": "picoruby-wasm",
             "request": "launch",
             "program": "./index.html",
+            "cwd": "${workspaceFolder}",
             "stopOnEntry": true
           }
         ]

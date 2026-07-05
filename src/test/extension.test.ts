@@ -70,6 +70,28 @@ suite('Extension Test Suite', () => {
 		);
 	});
 
+	test('package.json registers picoruby-wasm debugger', () => {
+		const pkg = readJson('package.json');
+		const debuggers = pkg.contributes?.debuggers as any[];
+		const activationEvents = pkg.activationEvents as string[];
+
+		assert.ok(Array.isArray(debuggers), 'contributes.debuggers must be an array');
+
+		const picorubyWasmDebugger = debuggers.find((debuggerContribution) => debuggerContribution.type === 'picoruby-wasm');
+		assert.ok(picorubyWasmDebugger, 'picoruby-wasm debugger must be registered');
+		assert.strictEqual(
+			picorubyWasmDebugger.label,
+			'PicoRuby WASM',
+			'picoruby-wasm debugger label must match'
+		);
+
+		assert.ok(
+			activationEvents.includes('onDebugInitialConfigurations:picoruby-wasm') &&
+				activationEvents.includes('onDebugResolve:picoruby-wasm'),
+			'extension must activate for picoruby-wasm debug configuration hooks'
+		);
+	});
+
 	test('picoruby base grammar structure is valid', () => {
 		const grammar = readJson('syntaxes/picoruby.tmLanguage.json');
 

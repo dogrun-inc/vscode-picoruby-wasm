@@ -17,7 +17,8 @@ export class PicoRubyWasmDebugConfigurationProvider implements vscode.DebugConfi
 		resolved.type = DEBUG_TYPE;
 		resolved.request = resolved.request ?? 'launch';
 		resolved.name = resolved.name ?? 'Launch PicoRuby WASM';
-		resolved.program = resolved.program ?? this.getDefaultProgram(folder);
+		resolved.program = resolved.program ?? this.getDefaultProgram();
+		resolved.cwd = resolved.cwd ?? this.getDefaultCwd(folder);
 		resolved.stopOnEntry = resolved.stopOnEntry ?? true;
 
 		return resolved;

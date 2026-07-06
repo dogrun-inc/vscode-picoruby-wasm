@@ -3,6 +3,7 @@
   "displayName": "PicoRuby WASM",
   "description": "Syntax highlighting and code completion support for PicoRuby in VS Code",
   "version": "0.1.0",
+  "icon": "images/icon.png",
   "publisher": "dogrun-inc",
   "license": "MIT",
   "repository": {
@@ -29,6 +30,8 @@
   ],
   "activationEvents": [
     "onLanguage:picoruby",
+    "onDebugInitialConfigurations:picoruby-wasm",
+    "onDebugResolve:picoruby-wasm",
     "onCommand:picoruby.enable",
     "onCommand:picoruby.disable"
   ],
@@ -66,6 +69,50 @@
         "command": "picoruby.disable",
         "title": "Disable PicoRuby for this workspace (remove .rb mapping)"
       }
+    ],
+    "debuggers": [
+      {
+        "type": "picoruby-wasm",
+        "label": "PicoRuby WASM",
+        "languages": ["picoruby"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the HTML entrypoint that the mock debugger should launch."
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "default": true,
+                "description": "Pause immediately after the mock runtime reports launch success."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for the mock runtime."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments forwarded to the mock runtime."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "name": "Launch PicoRuby WASM",
+            "type": "picoruby-wasm",
+            "request": "launch",
+            "program": "./index.html",
+            "cwd": "${workspaceFolder}",
+            "stopOnEntry": true
+          }
+        ]
+      }
     ]
   },
   "scripts": {
@@ -75,6 +122,9 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test"
+  },
+  "dependencies": {
+    "@vscode/debugadapter": "^1.68.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.120.0",

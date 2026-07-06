@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch PicoRuby WASM",
+            "type": "picoruby-wasm",
+            "request": "launch",
+            "program": "./index.html",
+            "stopOnEntry": true,
+            "cwd": "${workspaceFolder}",
+            "args": []
+        }
+    ]
+}

@@ -74,18 +74,22 @@ function createPicoRubyWasmWebviewHtml(webview: vscode.Webview): string {
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview.cspSource};">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval' 'unsafe-eval'; connect-src ${webview.cspSource}; worker-src ${webview.cspSource} blob:;">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>PicoRuby WASM</title>
 </head>
 <body>
 	<h1>PicoRuby WASM</h1>
 	<p>WebView を初期化中です。</p>
-	<script src="${scriptUri}"></script>
-	<script nonce="${nonce}">
-		Module().then(() => {
-			console.log('PicoRuby WASM in WebView Loaded!');
-		});
+	<script type="module" nonce="${nonce}">
+		import('${scriptUri}')
+			.then(({ default: Module }) => Module())
+			.then(() => {
+				console.log('PicoRuby WASM in WebView Loaded!');
+			})
+			.catch((error) => {
+				console.error('Failed to load PicoRuby WASM in WebView', error);
+			});
 	</script>
 </body>
 </html>`;

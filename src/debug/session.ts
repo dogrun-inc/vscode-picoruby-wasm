@@ -172,7 +172,13 @@ class PicoRubyWasmMockSessionState {
 
 	reset(): Promise<void> {
 		this.stopped = false;
+		this.disposeWebviewPanel();
 		return this.runtimeClient.stop();
+	}
+
+	private disposeWebviewPanel(): void {
+		this.webviewPanel?.dispose();
+		this.webviewPanel = undefined;
 	}
 
 	private showWebviewPanel(): void {

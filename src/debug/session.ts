@@ -58,7 +58,11 @@ interface PicoRubyWasmVariable {
 }
 
 function getExtensionUri(): vscode.Uri {
-	return extensionContext?.extensionUri ?? vscode.Uri.file(process.cwd());
+	if (!extensionContext) {
+		throw new Error('PicoRuby WASM extension context is not initialized.');
+	}
+
+	return extensionContext.extensionUri;
 }
 
 function getNonce(): string {

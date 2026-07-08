@@ -84,7 +84,7 @@ function createPicoRubyWasmWebviewHtml(webview: vscode.Webview): string {
 </head>
 <body>
 	<h1>PicoRuby WASM</h1>
-	<p>WebView を初期化中です。</p>
+	<p>Initializing WebView.</p>
 	<script type="module" nonce="${nonce}">
 		import('${scriptUri}')
 			.then(({ default: Module }) => Module())

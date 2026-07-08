@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import {
 	InitializedEvent,
 	LoggingDebugSession,
@@ -8,6 +9,14 @@ import {
 	TerminatedEvent
 } from '@vscode/debugadapter';
 import { PicoRubyWasmRuntimeClient } from './wasmRuntimeClient';
+
+const WEBVIEW_VIEW_TYPE = 'picoruby-wasm.webview';
+
+let extensionContext: vscode.ExtensionContext | undefined;
+
+export function setPicoRubyWasmExtensionContext(context: vscode.ExtensionContext): void {
+	extensionContext = context;
+}
 
 interface PicoRubyWasmInitializeResponseBody {
 	supportsConfigurationDoneRequest: boolean;
@@ -48,6 +57,71 @@ interface PicoRubyWasmVariable {
 	variablesReference: number;
 }
 
+function getExtensionUri(): vscode.Uri {
+	if (!extensionContext) {
+		throw new Error('PicoRuby WASM extension context is not initialized.');
+	}
+
+	return extensionContext.extensionUri;
+}
+
+function getNonce(): string {
+	return randomBytes(16).toString('hex');
+}
+
+function createPicoRubyWasmWebviewHtml(webview: vscode.Webview): string {
+	return createPicoRubyWasmWebviewHtmlWithExtensionUri(webview, getExtensionUri());
+}
+
+function createPicoRubyWasmWebviewHtmlWithExtensionUri(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+	const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'assets', 'picoruby.js'));
+	const nonce = getNonce();
+
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval'; connect-src ${webview.cspSource}; worker-src ${webview.cspSource} blob:;">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>PicoRuby WASM</title>
+</head>
+<body>
+	<h1>PicoRuby WASM</h1>
+	<p>Initializing WebView.</p>
+	<script type="module" nonce="${nonce}">
+		import('${scriptUri}')
+			.then(({ default: Module }) => Module())
+			.then(() => {
+				console.log('PicoRuby WASM in WebView Loaded!');
+			})
+			.catch((error) => {
+				console.error('Failed to load PicoRuby WASM in WebView', error);
+			});
+	</script>
+</body>
+</html>`;
+}
+
+export const picoRubyWasmWebviewTestHooks = {
+	createPicoRubyWasmWebviewHtmlWithExtensionUri
+};
+
+function createPicoRubyWasmWebviewPanel(): vscode.WebviewPanel {
+	const extensionUri = getExtensionUri();
+	const panel = vscode.window.createWebviewPanel(
+		WEBVIEW_VIEW_TYPE,
+		'PicoRuby WASM',
+		vscode.ViewColumn.Active,
+		{
+			enableScripts: true,
+			localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'assets')]
+		}
+	);
+
+	panel.webview.html = createPicoRubyWasmWebviewHtml(panel.webview);
+	return panel;
+}
+
 export interface PicoRubyWasmLaunchArguments {
 	program?: string;
 	args?: string[];
@@ -60,6 +134,7 @@ class PicoRubyWasmMockSessionState {
 	private stopped = false;
 	private stopOnEntry = true;
 	private activeProgram = path.resolve(process.cwd(), 'index.html');
+	private webviewPanel: vscode.WebviewPanel | undefined;
 
 	createInitializeBody(): PicoRubyWasmInitializeResponseBody {
 		return {
@@ -77,6 +152,7 @@ class PicoRubyWasmMockSessionState {
 	async launch(args: PicoRubyWasmLaunchArguments): Promise<{ output: string }> {
 		this.stopOnEntry = args.stopOnEntry ?? true;
 		this.activeProgram = this.resolveProgramPath(args.program, args.cwd);
+		this.showWebviewPanel();
 		const result = await this.runtimeClient.launch(args);
 		const outputEvent = result.events.find((event) => event.type === 'output');
 
@@ -103,7 +179,25 @@ class PicoRubyWasmMockSessionState {
 
 	reset(): Promise<void> {
 		this.stopped = false;
+		this.disposeWebviewPanel();
 		return this.runtimeClient.stop();
+	}
+
+	private disposeWebviewPanel(): void {
+		this.webviewPanel?.dispose();
+		this.webviewPanel = undefined;
+	}
+
+	private showWebviewPanel(): void {
+		if (this.webviewPanel) {
+			this.webviewPanel.reveal(vscode.ViewColumn.Active);
+			return;
+		}
+
+		this.webviewPanel = createPicoRubyWasmWebviewPanel();
+		this.webviewPanel.onDidDispose(() => {
+			this.webviewPanel = undefined;
+		});
 	}
 
 	createThreads(): PicoRubyWasmThread[] {

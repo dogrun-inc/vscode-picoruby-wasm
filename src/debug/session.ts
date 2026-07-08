@@ -70,7 +70,10 @@ function getNonce(): string {
 }
 
 function createPicoRubyWasmWebviewHtml(webview: vscode.Webview): string {
-	const extensionUri = getExtensionUri();
+	return createPicoRubyWasmWebviewHtmlWithExtensionUri(webview, getExtensionUri());
+}
+
+function createPicoRubyWasmWebviewHtmlWithExtensionUri(webview: vscode.Webview, extensionUri: vscode.Uri): string {
 	const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'assets', 'picoruby.js'));
 	const nonce = getNonce();
 
@@ -98,6 +101,10 @@ function createPicoRubyWasmWebviewHtml(webview: vscode.Webview): string {
 </body>
 </html>`;
 }
+
+export const picoRubyWasmWebviewTestHooks = {
+	createPicoRubyWasmWebviewHtmlWithExtensionUri
+};
 
 function createPicoRubyWasmWebviewPanel(): vscode.WebviewPanel {
 	const extensionUri = getExtensionUri();

@@ -183,7 +183,8 @@ function createPicoRubyWasmWebviewHtmlWithExtensionUri(webview: vscode.Webview, 
 			}
 
 			try {
-				return JSON.stringify(value);
+				const json = JSON.stringify(value);
+				return typeof json === 'string' ? json : String(value);
 			} catch {
 				return String(value);
 			}
@@ -416,7 +417,8 @@ class PicoRubyWasmMockSessionState {
 		}
 
 		try {
-			return JSON.stringify(text);
+			const json = JSON.stringify(text);
+			return typeof json === 'string' ? json : String(text);
 		} catch {
 			return String(text);
 		}

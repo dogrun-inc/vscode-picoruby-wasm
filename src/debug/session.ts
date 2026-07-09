@@ -69,6 +69,10 @@ function getNonce(): string {
 	return randomBytes(16).toString('hex');
 }
 
+function formatWebviewLogOutput(text: string): string {
+	return `[webview] ${text.endsWith('\n') ? text : `${text}\n`}`;
+}
+
 function createPicoRubyWasmWebviewHtml(webview: vscode.Webview): string {
 	return createPicoRubyWasmWebviewHtmlWithExtensionUri(webview, getExtensionUri());
 }
@@ -89,6 +93,45 @@ function createPicoRubyWasmWebviewHtmlWithExtensionUri(webview: vscode.Webview, 
 	<h1>PicoRuby WASM</h1>
 	<p>Initializing WebView.</p>
 	<script type="module" nonce="${nonce}">
+		const vscode = acquireVsCodeApi();
+		const stringifyLogValue = (value) => {
+			if (typeof value === 'string') {
+				return value;
+			}
+
+			try {
+				return JSON.stringify(value);
+			} catch {
+				return String(value);
+			}
+		};
+
+		const forwardLogMessage = (text) => {
+			vscode.postMessage({ type: 'log', text });
+		};
+
+		window.addEventListener('message', (event) => {
+			const data = event.data;
+
+			if (data?.type !== 'log') {
+				return;
+			}
+
+			forwardLogMessage(stringifyLogValue(data.text));
+		});
+
+		const originalConsoleLog = console.log.bind(console);
+		console.log = (...args) => {
+			originalConsoleLog(...args);
+			window.postMessage({ type: 'log', text: args.map(stringifyLogValue).join(' ') }, '*');
+		};
+
+		const originalConsoleError = console.error.bind(console);
+		console.error = (...args) => {
+			originalConsoleError(...args);
+			window.postMessage({ type: 'log', text: args.map(stringifyLogValue).join(' ') }, '*');
+		};
+
 		import('${scriptUri}')
 			.then(({ default: Module }) => Module())
 			.then(() => {
@@ -131,10 +174,15 @@ export interface PicoRubyWasmLaunchArguments {
 
 class PicoRubyWasmMockSessionState {
 	private readonly runtimeClient = new PicoRubyWasmRuntimeClient();
+	private readonly onWebviewLog: ((text: string) => void) | undefined;
 	private stopped = false;
 	private stopOnEntry = true;
 	private activeProgram = path.resolve(process.cwd(), 'index.html');
 	private webviewPanel: vscode.WebviewPanel | undefined;
+
+	constructor(onWebviewLog?: (text: string) => void) {
+		this.onWebviewLog = onWebviewLog;
+	}
 
 	createInitializeBody(): PicoRubyWasmInitializeResponseBody {
 		return {
@@ -195,9 +243,33 @@ class PicoRubyWasmMockSessionState {
 		}
 
 		this.webviewPanel = createPicoRubyWasmWebviewPanel();
+		this.webviewPanel.webview.onDidReceiveMessage((message: unknown) => {
+			if (typeof message !== 'object' || message === null) {
+				return;
+			}
+
+			const logMessage = message as { type?: unknown; text?: unknown };
+			if (logMessage.type !== 'log') {
+				return;
+			}
+
+			this.onWebviewLog?.(this.stringifyWebviewMessage(logMessage.text));
+		});
 		this.webviewPanel.onDidDispose(() => {
 			this.webviewPanel = undefined;
 		});
+	}
+
+	private stringifyWebviewMessage(text: unknown): string {
+		if (typeof text === 'string') {
+			return text;
+		}
+
+		try {
+			return JSON.stringify(text);
+		} catch {
+			return String(text);
+		}
 	}
 
 	createThreads(): PicoRubyWasmThread[] {
@@ -269,7 +341,9 @@ class PicoRubyWasmMockSessionState {
 }
 
 export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
-	private readonly state = new PicoRubyWasmMockSessionState();
+	private readonly state = new PicoRubyWasmMockSessionState((text) => {
+		this.sendEvent(new OutputEvent(formatWebviewLogOutput(text), 'console'));
+	});
 
 	protected initializeRequest(response: any): void {
 		response.body = this.state.createInitializeBody();
@@ -336,7 +410,17 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 
 class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 	private readonly emitter = new vscode.EventEmitter<vscode.DebugProtocolMessage>();
-	private readonly state = new PicoRubyWasmMockSessionState();
+	private readonly state = new PicoRubyWasmMockSessionState((text) => {
+		this.emit({
+			type: 'event',
+			seq: this.nextMessageSeq(),
+			event: 'output',
+			body: {
+				category: 'console',
+				output: formatWebviewLogOutput(text)
+			}
+		});
+	});
 	private nextSeq = 1;
 
 	readonly onDidSendMessage = this.emitter.event;

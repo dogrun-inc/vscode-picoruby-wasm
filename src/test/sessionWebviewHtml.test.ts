@@ -34,5 +34,14 @@ suite('session webview html', () => {
 			html.includes("import('https://test.webview.source/extension-root/assets/picoruby.js')"),
 			'generated HTML must import the asWebviewUri-converted script URI'
 		);
+		assert.ok(html.includes('const vscode = acquireVsCodeApi();'), 'webview must initialize VS Code API bridge');
+		assert.ok(
+			html.includes("window.addEventListener('message', (event) => {"),
+			'webview must listen for window messages before forwarding logs to extension host'
+		);
+		assert.ok(
+			html.includes("vscode.postMessage({ type: 'log', text });"),
+			'webview must post log messages to extension host'
+		);
 	});
 });

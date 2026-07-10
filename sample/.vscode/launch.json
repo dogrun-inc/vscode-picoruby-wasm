@@ -5,7 +5,7 @@
             "name": "Launch PicoRuby WASM",
             "type": "picoruby-wasm",
             "request": "launch",
-            "program": "./index.html",
+            "program": "${file}",
             "stopOnEntry": true,
             "cwd": "${workspaceFolder}",
             "args": []

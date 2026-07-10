@@ -36,12 +36,20 @@ suite('session webview html', () => {
 		);
 		assert.ok(html.includes('const vscode = acquireVsCodeApi();'), 'webview must initialize VS Code API bridge');
 		assert.ok(
-			html.includes("window.addEventListener('message', (event) => {"),
-			'webview must listen for window messages before forwarding logs to extension host'
+			html.includes("window.addEventListener('message', async (event) => {"),
+			'webview must listen for VS Code messages'
 		);
 		assert.ok(
 			html.includes("vscode.postMessage({ type: 'log', text });"),
 			'webview must post log messages to extension host'
+		);
+		assert.ok(
+			html.includes("vscode.postMessage({ type: 'ready' });"),
+			'webview must notify the extension host when WASM initialization completes'
+		);
+		assert.ok(
+			html.includes("if (data?.type !== 'start') {"),
+			'webview must handle start commands sent from VS Code'
 		);
 	});
 });

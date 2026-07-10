@@ -230,8 +230,15 @@ function createPicoRubyWasmWebviewHtmlWithExtensionUri(webview: vscode.Webview, 
 			const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
 			console.log('Received start command from VS Code.');
 			console.log(receivedCode);
-			// TODO: ここでPicoRubyにコードを渡して実行
-			void instance;
+			try {
+				instance.ccall('mrb_load_string', 'void', ['string'], [receivedCode]);
+				// If your build exposes a different API, replace the line above with:
+				// instance.evalString(receivedCode)
+				// or
+				// instance.picoRubyEval(receivedCode)
+			} catch (error) {
+				console.error('Failed to evaluate Ruby code in PicoRuby WASM', error);
+			}
 		});
 	</script>
 </body>

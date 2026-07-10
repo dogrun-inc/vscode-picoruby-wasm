@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { readFile } from 'node:fs/promises';
 import { randomBytes } from 'crypto';
 import {
 	InitializedEvent,
@@ -194,36 +195,44 @@ function createPicoRubyWasmWebviewHtmlWithExtensionUri(webview: vscode.Webview, 
 			vscode.postMessage({ type: 'log', text });
 		};
 
-		window.addEventListener('message', (event) => {
-			const data = event.data;
-
-			if (data?.type !== 'log') {
-				return;
-			}
-
-			forwardLogMessage(stringifyLogValue(data.text));
-		});
-
 		const originalConsoleLog = console.log.bind(console);
 		console.log = (...args) => {
 			originalConsoleLog(...args);
-			window.postMessage({ type: 'log', text: args.map(stringifyLogValue).join(' ') }, '*');
+			forwardLogMessage(args.map(stringifyLogValue).join(' '));
 		};
 
 		const originalConsoleError = console.error.bind(console);
 		console.error = (...args) => {
 			originalConsoleError(...args);
-			window.postMessage({ type: 'log', text: args.map(stringifyLogValue).join(' ') }, '*');
+			forwardLogMessage(args.map(stringifyLogValue).join(' '));
 		};
 
-		import('${scriptUri}')
+		const moduleReady = import('${scriptUri}')
 			.then(({ default: Module }) => Module())
-			.then(() => {
+			.then((instance) => {
 				console.log('PicoRuby WASM in WebView Loaded!');
+				vscode.postMessage({ type: 'ready' });
+				return instance;
 			})
 			.catch((error) => {
 				console.error('Failed to load PicoRuby WASM in WebView', error);
+				throw error;
 			});
+
+		window.addEventListener('message', async (event) => {
+			const data = event.data;
+
+			if (data?.type !== 'start') {
+				return;
+			}
+
+			const instance = await moduleReady;
+			const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
+			console.log('Received start command from VS Code.');
+			console.log(receivedCode);
+			// TODO: ここでPicoRubyにコードを渡して実行
+			void instance;
+		});
 	</script>
 </body>
 </html>`;
@@ -288,6 +297,10 @@ class PicoRubyWasmMockSessionState {
 	private activeProgram = path.resolve(process.cwd(), 'index.html');
 	/** WebView panel associated with this session. */
 	private webviewPanel: vscode.WebviewPanel | undefined;
+	/** Tracks whether the current WebView has finished WASM initialization. */
+	private webviewReady = false;
+	/** Ruby source code waiting to be sent to the WebView runtime. */
+	private pendingStartCode: string | undefined;
 
 	/**
 	 * @param onWebviewLog Callback that notifies the caller of log strings received from the WebView.
@@ -325,7 +338,9 @@ class PicoRubyWasmMockSessionState {
 	async launch(args: PicoRubyWasmLaunchArguments): Promise<{ output: string }> {
 		this.stopOnEntry = args.stopOnEntry ?? true;
 		this.activeProgram = this.resolveProgramPath(args.program, args.cwd);
+		this.pendingStartCode = await this.readProgramSource(this.activeProgram);
 		this.showWebviewPanel();
+		this.postStartMessageIfReady();
 		const result = await this.runtimeClient.launch(args);
 		const outputEvent = result.events.find((event) => event.type === 'output');
 
@@ -372,6 +387,7 @@ class PicoRubyWasmMockSessionState {
 	private disposeWebviewPanel(): void {
 		this.webviewPanel?.dispose();
 		this.webviewPanel = undefined;
+		this.webviewReady = false;
 	}
 
 	/**
@@ -393,16 +409,55 @@ class PicoRubyWasmMockSessionState {
 				return;
 			}
 
-			const logMessage = message as { type?: unknown; text?: unknown };
-			if (logMessage.type !== 'log') {
+			const receivedMessage = message as { type?: unknown; text?: unknown };
+			if (receivedMessage.type === 'ready') {
+				this.webviewReady = true;
+				this.postStartMessageIfReady();
 				return;
 			}
 
-			this.onWebviewLog?.(this.stringifyWebviewMessage(logMessage.text));
+			if (receivedMessage.type !== 'log') {
+				return;
+			}
+
+			this.onWebviewLog?.(this.stringifyWebviewMessage(receivedMessage.text));
 		});
 		this.webviewPanel.onDidDispose(() => {
 			this.webviewPanel = undefined;
+				this.webviewReady = false;
 		});
+	}
+
+	/**
+	 * Sends a start command to the WebView once both code and runtime are ready.
+	 */
+	private postStartMessageIfReady(): void {
+		if (!this.webviewPanel || !this.webviewReady || this.pendingStartCode === undefined) {
+			return;
+		}
+
+		const code = this.pendingStartCode;
+		this.pendingStartCode = undefined;
+		void this.webviewPanel.webview.postMessage({
+			type: 'start',
+			code
+		});
+	}
+
+	/**
+	 * Reads the target program source from disk and returns UTF-8 text.
+	 *
+	 * @param programPath Resolved program file path.
+	 * @returns Source text. Empty string is returned when the file cannot be read.
+	 */
+	private async readProgramSource(programPath: string): Promise<string> {
+		try {
+			return await readFile(programPath, 'utf8');
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.onWebviewLog?.(`Failed to read program source: ${programPath} (${message})`);
+			return '';
+		}
 	}
 
 	/**

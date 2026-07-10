@@ -1,5 +1,11 @@
 const vscode = acquireVsCodeApi();
 
+/**
+ * Converts a console argument into a loggable string.
+ *
+ * @param {unknown} value Console argument value.
+ * @returns {string} Serialized representation used for VS Code forwarding.
+ */
 const stringifyLogValue = (value) => {
 	if (typeof value === 'string') {
 		return value;
@@ -13,30 +19,53 @@ const stringifyLogValue = (value) => {
 	}
 };
 
+/**
+ * Forwards a single log line to the extension host.
+ *
+ * @param {string} text Log text.
+ */
 const forwardLogMessage = (text) => {
 	vscode.postMessage({ type: 'log', text });
 };
 
+/**
+ * Mirrors console.log output to the VS Code debug console.
+ * This keeps browser-side logs and extension-side logs consistent.
+ */
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args) => {
 	originalConsoleLog(...args);
 	forwardLogMessage(args.map(stringifyLogValue).join(' '));
 };
 
+/**
+ * Mirrors console.error output to the VS Code debug console.
+ */
 const originalConsoleError = console.error.bind(console);
 console.error = (...args) => {
 	originalConsoleError(...args);
 	forwardLogMessage(args.map(stringifyLogValue).join(' '));
 };
 
+/**
+ * Resolves the PicoRuby ESM bundle relative to this runtime module.
+ */
 const picorubyScriptUri = new URL('./picoruby.js', import.meta.url).toString();
 
+/**
+ * Shared module initialization promise.
+ * The instance is created once and reused by incoming start requests.
+ */
 const moduleReady = import(picorubyScriptUri)
 	.then(({ default: createModule }) => createModule({
 		print: (...args) => console.log(...args),
 		printErr: (...args) => console.error(...args)
 	}))
 	.then((instance) => {
+		/**
+		 * Initializes PicoRuby and starts a cooperative scheduler loop.
+		 * The loop keeps running in idle mode and immediately processes queued tasks.
+		 */
 		instance.ccall('picorb_init', 'number', [], []);
 		instance.picorubyRun = function() {
 			const MRB_TICK_UNIT = 4;
@@ -52,6 +81,9 @@ const moduleReady = import(picorubyScriptUri)
 			};
 			let lastTick = performance.now();
 
+			/**
+			 * Executes one scheduler slice and re-schedules itself.
+			 */
 			function run() {
 				const now = performance.now();
 				let tickCount = 0;
@@ -96,6 +128,9 @@ const moduleReady = import(picorubyScriptUri)
 		throw error;
 	});
 
+/**
+ * Receives launch requests from the extension host and creates PicoRuby tasks.
+ */
 window.addEventListener('message', async (event) => {
 	const data = event.data;
 

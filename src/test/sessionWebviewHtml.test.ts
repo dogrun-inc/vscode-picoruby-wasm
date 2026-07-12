@@ -24,7 +24,9 @@ suite('session webview html', () => {
 			'runtime script path must be resolved from extensionUri/assets/webviewRuntime.js'
 		);
 
-		const nonceMatch = html.match(/<script type="module" nonce="([a-f0-9]{32})" src="https:\/\/test\.webview\.source\/extension-root\/assets\/webviewRuntime\.js"><\/script>/);
+		const runtimeModuleScriptMatch = html.match(/<script\b[^>]*type="module"[^>]*src="https:\/\/test\.webview\.source\/extension-root\/assets\/webviewRuntime\.js"[^>]*><\/script>/);
+		assert.ok(runtimeModuleScriptMatch, 'module script must load webviewRuntime.js');
+		const nonceMatch = runtimeModuleScriptMatch?.[0].match(/\bnonce="([a-f0-9]{32})"/);
 		assert.ok(nonceMatch, 'module script must include a nonce generated from random bytes');
 		assert.ok(html.includes("script-src 'nonce-"), 'CSP must include nonce-based script-src');
 		assert.ok(html.includes("'wasm-unsafe-eval'"), 'CSP must allow wasm-unsafe-eval');

@@ -70,6 +70,11 @@
         "title": "Disable PicoRuby for this workspace (remove .rb mapping)"
       }
     ],
+    "breakpoints": [
+      {
+        "language": "picoruby"
+      }
+    ],
     "debuggers": [
       {
         "type": "picoruby-wasm",

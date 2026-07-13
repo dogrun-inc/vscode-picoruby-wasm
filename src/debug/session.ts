@@ -185,7 +185,33 @@ function createPicoRubyWasmWebviewHtmlWithExtensionUri(webview: vscode.Webview, 
  * Public test hook to call WebView HTML generation directly from unit tests.
  */
 export const picoRubyWasmWebviewTestHooks = {
-	createPicoRubyWasmWebviewHtmlWithExtensionUri
+	createPicoRubyWasmWebviewHtmlWithExtensionUri,
+	createMockSessionStateHarness(): {
+		configureExecutionForTest(program: string, stopOnEntry: boolean): void;
+		setBreakpoints(request: { breakpoints?: Array<{ line?: number; column?: number }> }): void;
+		getBreakpointLines(): number[];
+		recordRuntimeStop(line: unknown): 'entry' | 'breakpoint';
+		createStackFrames(): PicoRubyWasmStackFrame[];
+	} {
+		const state = new PicoRubyWasmMockSessionState();
+		return {
+			configureExecutionForTest(program: string, stopOnEntry: boolean): void {
+				state.configureExecutionForTest(program, stopOnEntry);
+			},
+			setBreakpoints(request: { breakpoints?: Array<{ line?: number; column?: number }> }): void {
+				state.setBreakpoints(request);
+			},
+			getBreakpointLines(): number[] {
+				return state.getBreakpointLines();
+			},
+			recordRuntimeStop(line: unknown): 'entry' | 'breakpoint' {
+				return state.recordRuntimeStop(line);
+			},
+			createStackFrames(): PicoRubyWasmStackFrame[] {
+				return state.createStackFrames();
+			}
+		};
+	}
 };
 
 /**
@@ -232,12 +258,18 @@ class PicoRubyWasmMockSessionState {
 	private readonly runtimeClient = new PicoRubyWasmRuntimeClient();
 	/** Callback used to forward logs received from the WebView. */
 	private readonly onWebviewLog: ((text: string) => void) | undefined;
-	/** Whether the stopOnEntry stop event has already been emitted. */
-	private stopped = false;
+	/** Callback used to notify the adapter that the runtime paused. */
+	private readonly onRuntimeStopped: ((reason: 'entry' | 'breakpoint', line: number) => void) | undefined;
 	/** Flag that controls stop-on-entry behavior. */
 	private stopOnEntry = true;
+	/** Tracks whether the next runtime stop should be surfaced as entry. */
+	private pendingEntryStop = false;
 	/** Absolute path to the currently active program. */
 	private activeProgram = path.resolve(process.cwd(), 'index.html');
+	/** 1-based source line surfaced in stackTrace responses. */
+	private currentExecutionLine = 1;
+	/** Source breakpoints configured by VS Code. */
+	private breakpointLines: number[] = [];
 	/** WebView panel associated with this session. */
 	private webviewPanel: vscode.WebviewPanel | undefined;
 	/** Tracks whether the current WebView has finished WASM initialization. */
@@ -248,8 +280,12 @@ class PicoRubyWasmMockSessionState {
 	/**
 	 * @param onWebviewLog Callback that notifies the caller of log strings received from the WebView.
 	 */
-	constructor(onWebviewLog?: (text: string) => void) {
+	constructor(
+		onWebviewLog?: (text: string) => void,
+		onRuntimeStopped?: (reason: 'entry' | 'breakpoint', line: number) => void
+	) {
 		this.onWebviewLog = onWebviewLog;
+		this.onRuntimeStopped = onRuntimeStopped;
 	}
 
 	/**
@@ -280,9 +316,12 @@ class PicoRubyWasmMockSessionState {
 	 */
 	async launch(args: PicoRubyWasmLaunchArguments): Promise<{ output: string }> {
 		this.stopOnEntry = args.stopOnEntry ?? true;
+		this.pendingEntryStop = this.stopOnEntry;
+		this.currentExecutionLine = 1;
 		this.activeProgram = this.resolveProgramPath(args.program, args.cwd);
 		this.pendingStartCode = await this.readProgramSource(this.activeProgram);
 		this.showWebviewPanel();
+		this.postRuntimeConfigurationIfReady();
 		this.postStartMessageIfReady();
 		const result = await this.runtimeClient.launch(args);
 		const outputEvent = result.events.find((event) => event.type === 'output');
@@ -296,32 +335,80 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
-	 * Determines whether a stop event should be emitted exactly once for stopOnEntry.
-	 *
-	 * @returns True when a stopped event should be sent in this call.
-	 */
-	markStopped(): boolean {
-		if (!this.stopOnEntry) {
-			return false;
-		}
-
-		if (this.stopped) {
-			return false;
-		}
-
-		this.stopped = true;
-		return true;
-	}
-
-	/**
 	 * Resets session state and shuts down runtime/WebView resources.
 	 *
 	 * @returns Promise that resolves when asynchronous stop processing completes.
 	 */
 	reset(): Promise<void> {
-		this.stopped = false;
+		this.pendingEntryStop = false;
+		this.currentExecutionLine = 1;
+		this.pendingStartCode = undefined;
+		this.breakpointLines = [];
 		this.disposeWebviewPanel();
 		return this.runtimeClient.stop();
+	}
+
+	/**
+	 * Stores source breakpoints and forwards them to the runtime when possible.
+	 *
+	 * @param request DAP breakpoint request payload.
+	 */
+	setBreakpoints(request: { breakpoints?: Array<{ line?: number; column?: number }> }): void {
+		this.breakpointLines = Array.from(
+			new Set(
+				(request.breakpoints ?? [])
+					.map((breakpoint) => breakpoint.line)
+					.filter((line): line is number => typeof line === 'number' && Number.isInteger(line) && line > 0)
+			)
+		).sort((left, right) => left - right);
+		this.postRuntimeConfigurationIfReady();
+	}
+
+	/**
+	 * Re-sends current runtime configuration to the WebView.
+	 */
+	syncRuntimeConfiguration(): void {
+		this.postRuntimeConfigurationIfReady();
+	}
+
+	/**
+	 * Returns the current breakpoint line list.
+	 *
+	 * @returns Sorted 1-based breakpoint lines.
+	 */
+	getBreakpointLines(): number[] {
+		return [...this.breakpointLines];
+	}
+
+	/**
+	 * Records a runtime stop location and maps it to a DAP stop reason.
+	 *
+	 * @param line 1-based source line reported by the runtime.
+	 * @returns Stop reason for VS Code.
+	 */
+	recordRuntimeStop(line: unknown): 'entry' | 'breakpoint' {
+		const normalizedLine = typeof line === 'number' && Number.isInteger(line) && line > 0 ? line : 1;
+		this.currentExecutionLine = normalizedLine;
+
+		if (this.pendingEntryStop) {
+			this.pendingEntryStop = false;
+			return 'entry';
+		}
+
+		return 'breakpoint';
+	}
+
+	/**
+	 * Test-only helper for configuring execution metadata without creating a WebView.
+	 *
+	 * @param program Absolute source path to surface in stackTrace responses.
+	 * @param stopOnEntry Whether the next runtime stop should be treated as entry.
+	 */
+	configureExecutionForTest(program: string, stopOnEntry: boolean): void {
+		this.activeProgram = program;
+		this.stopOnEntry = stopOnEntry;
+		this.pendingEntryStop = stopOnEntry;
+		this.currentExecutionLine = 1;
 	}
 
 	/**
@@ -343,6 +430,7 @@ class PicoRubyWasmMockSessionState {
 	private showWebviewPanel(): void {
 		if (this.webviewPanel) {
 			this.webviewPanel.reveal(vscode.ViewColumn.Active);
+			this.postRuntimeConfigurationIfReady();
 			return;
 		}
 
@@ -352,10 +440,17 @@ class PicoRubyWasmMockSessionState {
 				return;
 			}
 
-			const receivedMessage = message as { type?: unknown; text?: unknown };
+			const receivedMessage = message as { type?: unknown; text?: unknown; line?: unknown };
 			if (receivedMessage.type === 'ready') {
 				this.webviewReady = true;
+				this.postRuntimeConfigurationIfReady();
 				this.postStartMessageIfReady();
+				return;
+			}
+
+			if (receivedMessage.type === 'stopped') {
+				const reason = this.recordRuntimeStop(receivedMessage.line);
+				this.onRuntimeStopped?.(reason, this.currentExecutionLine);
 				return;
 			}
 
@@ -383,7 +478,22 @@ class PicoRubyWasmMockSessionState {
 		this.pendingStartCode = undefined;
 		void this.webviewPanel.webview.postMessage({
 			type: 'start',
-			code
+			code,
+			stopOnEntry: this.stopOnEntry
+		});
+	}
+
+	/**
+	 * Sends the current breakpoint configuration to the WebView runtime.
+	 */
+	private postRuntimeConfigurationIfReady(): void {
+		if (!this.webviewPanel || !this.webviewReady) {
+			return;
+		}
+
+		void this.webviewPanel.webview.postMessage({
+			type: 'setBreakpoints',
+			lines: this.breakpointLines
 		});
 	}
 
@@ -441,10 +551,10 @@ class PicoRubyWasmMockSessionState {
 			{
 				id: 1,
 				name: 'mock main',
-				line: 1,
+				line: this.currentExecutionLine,
 				column: 1,
 				source: {
-					name: 'index.html',
+					name: path.basename(this.activeProgram),
 					path: this.activeProgram
 				}
 			}
@@ -536,6 +646,10 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	/** Shared session state with a callback that forwards WebView logs to the Debug Console. */
 	private readonly state = new PicoRubyWasmMockSessionState((text) => {
 		this.sendEvent(new OutputEvent(formatWebviewLogOutput(text), 'console'));
+	}, (reason) => {
+		const stoppedEvent = new StoppedEvent(reason, 1);
+		Object.assign(stoppedEvent.body, { allThreadsStopped: true });
+		this.sendEvent(stoppedEvent);
 	});
 
 	/**
@@ -571,10 +685,7 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 */
 	protected configurationDoneRequest(response: any): void {
 		this.sendResponse(response);
-
-		if (this.state.markStopped()) {
-			this.sendEvent(new StoppedEvent('entry', 1));
-		}
+		this.state.syncRuntimeConfiguration();
 	}
 
 	/**
@@ -627,6 +738,7 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 * @param args Breakpoint request payload.
 	 */
 	protected setBreakpointsRequest(response: any, args: { breakpoints?: Array<{ line?: number; column?: number }> }): void {
+		this.state.setBreakpoints(args);
 		response.body = {
 			breakpoints: this.state.createBreakpoints(args)
 		};
@@ -671,6 +783,18 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 			body: {
 				category: 'console',
 				output: formatWebviewLogOutput(text)
+			}
+		});
+	}, (reason, line) => {
+		this.emit({
+			type: 'event',
+			seq: this.nextMessageSeq(),
+			event: 'stopped',
+			body: {
+				reason,
+				threadId: 1,
+				allThreadsStopped: true,
+				description: `Paused at line ${line}`
 			}
 		});
 	});
@@ -754,14 +878,7 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 					success: true,
 					command: 'configurationDone'
 				});
-				if (this.state.markStopped()) {
-					this.emit({
-						type: 'event',
-						seq: this.nextMessageSeq(),
-						event: 'stopped',
-						body: { reason: 'entry', threadId: 1, allThreadsStopped: true }
-					});
-				}
+				this.state.syncRuntimeConfiguration();
 				return;
 			case 'threads':
 				this.emit({
@@ -804,6 +921,7 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				});
 				return;
 			case 'setBreakpoints':
+				this.state.setBreakpoints(message.arguments ?? {});
 				this.emit({
 					type: 'response',
 					seq: this.nextMessageSeq(),

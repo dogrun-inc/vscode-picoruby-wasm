@@ -58,69 +58,10 @@ const picorubyScriptUri = new URL('./picoruby.js', import.meta.url).toString();
  */
 const moduleReady = import(picorubyScriptUri)
 	.then(({ default: createModule }) => createModule({
-		print: (...args) => console.log(...args),
-		printErr: (...args) => console.error(...args)
+		print: (text) => console.log(text),
+		printErr: (text) => console.error(text)
 	}))
 	.then((instance) => {
-		const runtimeState = {
-			breakpointLines: new Set(),
-			paused: false,
-			stopOnEntryPending: false,
-			runTimer: undefined,
-			lineLookupWarningShown: false
-		};
-		instance.picorubyDebugState = runtimeState;
-
-		const getCurrentExecutionLine = () => {
-			try {
-				if (typeof instance._mrb_debug_current_line_wasm === 'function') {
-					const currentLine = instance._mrb_debug_current_line_wasm();
-					return Number.isInteger(currentLine) && currentLine > 0 ? currentLine : 1;
-				}
-
-				if (typeof instance.ccall === 'function') {
-					const currentLine = instance.ccall('mrb_debug_current_line_wasm', 'number', [], []);
-					return Number.isInteger(currentLine) && currentLine > 0 ? currentLine : 1;
-				}
-			} catch (error) {
-				if (!runtimeState.lineLookupWarningShown) {
-					runtimeState.lineLookupWarningShown = true;
-					console.log('Current line lookup is not available yet.', error);
-				}
-			}
-
-			return 1;
-		};
-
-		const pauseRuntime = (line) => {
-			runtimeState.paused = true;
-			if (runtimeState.runTimer !== undefined) {
-				clearTimeout(runtimeState.runTimer);
-				runtimeState.runTimer = undefined;
-			}
-			vscode.postMessage({ type: 'stopped', line });
-		};
-
-		const scheduleRun = (callback, delay) => {
-			if (runtimeState.paused) {
-				return;
-			}
-
-			runtimeState.runTimer = setTimeout(() => {
-				runtimeState.runTimer = undefined;
-				callback();
-			}, delay);
-		};
-
-		const shouldPauseAtLine = (line) => {
-			if (runtimeState.stopOnEntryPending) {
-				runtimeState.stopOnEntryPending = false;
-				return true;
-			}
-
-			return runtimeState.breakpointLines.has(line);
-		};
-
 		/**
 		 * Initializes PicoRuby and starts a cooperative scheduler loop.
 		 * The loop keeps running in idle mode and immediately processes queued tasks.
@@ -144,10 +85,6 @@ const moduleReady = import(picorubyScriptUri)
 			 * Executes one scheduler slice and re-schedules itself.
 			 */
 			function run() {
-				if (runtimeState.paused) {
-					return;
-				}
-
 				const now = performance.now();
 				let tickCount = 0;
 
@@ -164,12 +101,6 @@ const moduleReady = import(picorubyScriptUri)
 				const sliceStart = performance.now();
 				let progressed = false;
 				while (performance.now() - sliceStart < BATCH_DURATION) {
-					const currentLine = getCurrentExecutionLine();
-					if (shouldPauseAtLine(currentLine)) {
-						pauseRuntime(currentLine);
-						return;
-					}
-
 					const status = runStepStatus();
 					if (status < 0) {
 						console.error('mrb_run_step_status returned', status, '- scheduler continues');
@@ -182,15 +113,8 @@ const moduleReady = import(picorubyScriptUri)
 				}
 
 				const delay = progressed || gcSchedulerPending() === 1 ? 0 : IDLE_DELAY;
-				scheduleRun(run, delay);
+				setTimeout(run, delay);
 			}
-
-			instance.picorubyResume = () => {
-				runtimeState.paused = false;
-				if (runtimeState.runTimer === undefined) {
-					scheduleRun(run, 0);
-				}
-			};
 
 			run();
 		};
@@ -209,30 +133,16 @@ const moduleReady = import(picorubyScriptUri)
  */
 window.addEventListener('message', async (event) => {
 	const data = event.data;
-	if (data?.type === 'setBreakpoints') {
-		const instance = await moduleReady;
-		const lines = Array.isArray(data.lines) ? data.lines : [];
-		instance.picorubyDebugState.breakpointLines = new Set(
-			lines.filter((line) => Number.isInteger(line) && line > 0)
-		);
-		return;
-	}
-
 	if (data?.type !== 'start') {
 		return;
 	}
 
 	const instance = await moduleReady;
 	const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
-	instance.picorubyDebugState.stopOnEntryPending = data.stopOnEntry === true;
-	instance.picorubyDebugState.paused = false;
 	console.log('Received start command from VS Code.');
 	console.log(receivedCode);
 	try {
 		instance.ccall('picorb_create_task', 'number', ['string'], [receivedCode]);
-		if (typeof instance.picorubyResume === 'function') {
-			instance.picorubyResume();
-		}
 	} catch (error) {
 		console.error('Failed to evaluate Ruby code in PicoRuby WASM', error);
 	}

@@ -162,7 +162,7 @@ function createPicoRubyWasmWebviewHtml(webview: vscode.Webview): string {
  * @returns Full HTML string for the WebView.
  */
 function createPicoRubyWasmWebviewHtmlWithExtensionUri(webview: vscode.Webview, extensionUri: vscode.Uri): string {
-	const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'assets', 'picoruby.js'));
+	const runtimeScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'assets', 'webviewRuntime.js'));
 	const nonce = getNonce();
 
 	return `<!DOCTYPE html>
@@ -176,71 +176,7 @@ function createPicoRubyWasmWebviewHtmlWithExtensionUri(webview: vscode.Webview, 
 <body>
 	<h1>PicoRuby WASM</h1>
 	<p>Initializing WebView.</p>
-	<script type="module" nonce="${nonce}">
-		const vscode = acquireVsCodeApi();
-		const stringifyLogValue = (value) => {
-			if (typeof value === 'string') {
-				return value;
-			}
-
-			try {
-				const json = JSON.stringify(value);
-				return typeof json === 'string' ? json : String(value);
-			} catch {
-				return String(value);
-			}
-		};
-
-		const forwardLogMessage = (text) => {
-			vscode.postMessage({ type: 'log', text });
-		};
-
-		const originalConsoleLog = console.log.bind(console);
-		console.log = (...args) => {
-			originalConsoleLog(...args);
-			forwardLogMessage(args.map(stringifyLogValue).join(' '));
-		};
-
-		const originalConsoleError = console.error.bind(console);
-		console.error = (...args) => {
-			originalConsoleError(...args);
-			forwardLogMessage(args.map(stringifyLogValue).join(' '));
-		};
-
-		const moduleReady = import('${scriptUri}')
-			.then(({ default: Module }) => Module())
-			.then((instance) => {
-				console.log('PicoRuby WASM in WebView Loaded!');
-				vscode.postMessage({ type: 'ready' });
-				return instance;
-			})
-			.catch((error) => {
-				console.error('Failed to load PicoRuby WASM in WebView', error);
-				throw error;
-			});
-
-		window.addEventListener('message', async (event) => {
-			const data = event.data;
-
-			if (data?.type !== 'start') {
-				return;
-			}
-
-			const instance = await moduleReady;
-			const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
-			console.log('Received start command from VS Code.');
-			console.log(receivedCode);
-			try {
-				instance.ccall('mrb_load_string', 'void', ['string'], [receivedCode]);
-				// If your build exposes a different API, replace the line above with:
-				// instance.evalString(receivedCode)
-				// or
-				// instance.picoRubyEval(receivedCode)
-			} catch (error) {
-				console.error('Failed to evaluate Ruby code in PicoRuby WASM', error);
-			}
-		});
-	</script>
+	<script type="module" nonce="${nonce}" src="${runtimeScriptUri}"></script>
 </body>
 </html>`;
 }

@@ -6,6 +6,7 @@ import {
 	InitializedEvent,
 	LoggingDebugSession,
 	OutputEvent,
+	StoppedEvent,
 	TerminatedEvent
 } from '@vscode/debugadapter';
 import { PicoRubyWasmRuntimeClient } from './wasmRuntimeClient';
@@ -197,10 +198,11 @@ function createPicoRubyWasmWebviewPanel(): vscode.WebviewPanel {
 	const panel = vscode.window.createWebviewPanel(
 		WEBVIEW_VIEW_TYPE,
 		'PicoRuby WASM',
-		vscode.ViewColumn.Active,
+		vscode.ViewColumn.Beside,
 		{
 			enableScripts: true,
-			localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'assets')]
+			localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'assets')],
+			retainContextWhenHidden: true
 		}
 	);
 
@@ -229,6 +231,8 @@ class PicoRubyWasmMockSessionState {
 	private readonly runtimeClient = new PicoRubyWasmRuntimeClient();
 	/** Callback used to forward logs received from the WebView. */
 	private readonly onWebviewLog: ((text: string) => void) | undefined;
+	/** Callback used to notify the adapter that runtime entered paused state. */
+	private readonly onRuntimeStopped: (() => void) | undefined;
 	/** Absolute path to the currently active program. */
 	private activeProgram = path.resolve(process.cwd(), 'index.html');
 	/** WebView panel associated with this session. */
@@ -241,8 +245,9 @@ class PicoRubyWasmMockSessionState {
 	/**
 	 * @param onWebviewLog Callback that notifies the caller of log strings received from the WebView.
 	 */
-	constructor(onWebviewLog?: (text: string) => void) {
+	constructor(onWebviewLog?: (text: string) => void, onRuntimeStopped?: () => void) {
 		this.onWebviewLog = onWebviewLog;
+		this.onRuntimeStopped = onRuntimeStopped;
 	}
 
 	/**
@@ -299,6 +304,25 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
+	 * Requests the WebView runtime to continue from a paused state.
+	 */
+	continueRuntime(): void {
+		console.log(
+            "[DEBUG] continueRuntime detailed check:",
+            "\n  - webviewPanel exists?", !!this.webviewPanel,
+            "\n  - webviewReady status?", this.webviewReady
+        );
+		if (!this.webviewPanel || !this.webviewReady) {
+			return;
+		}
+
+		this.webviewPanel.webview.postMessage({ type: 'continue' })
+		.then((success) => {
+			console.log("[DEBUG] continueRuntime: postMessage returned success =", success);
+		});
+	}
+
+	/**
 	 * Disposes the current WebView panel and clears its reference.
 	 */
 	private disposeWebviewPanel(): void {
@@ -330,6 +354,11 @@ class PicoRubyWasmMockSessionState {
 			if (receivedMessage.type === 'ready') {
 				this.webviewReady = true;
 				this.postStartMessageIfReady();
+				return;
+			}
+
+			if (receivedMessage.type === 'stopped') {
+				this.onRuntimeStopped?.();
 				return;
 			}
 
@@ -490,6 +519,10 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	/** Shared session state with a callback that forwards WebView logs to the Debug Console. */
 	private readonly state = new PicoRubyWasmMockSessionState((text) => {
 		this.sendEvent(new OutputEvent(formatWebviewLogOutput(text), 'console'));
+	}, () => {
+		const event = new StoppedEvent('entry', 1);
+		Object.assign(event.body, { allThreadsStopped: true });
+		this.sendEvent(event);
 	});
 
 	/**
@@ -524,6 +557,17 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 * @param response DAP response object.
 	 */
 	protected configurationDoneRequest(response: any): void {
+		this.sendResponse(response);
+	}
+
+	/**
+	 * Handles DAP continue requests.
+	 *
+	 * @param response DAP response object.
+	 */
+	protected continueRequest(response: any, _args: any): void {
+		this.state.continueRuntime();
+		response.body = { allThreadsContinued: true };
 		this.sendResponse(response);
 	}
 
@@ -610,6 +654,17 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				output: formatWebviewLogOutput(text)
 			}
 		});
+	}, () => {
+		this.emit({
+			type: 'event',
+			seq: this.nextMessageSeq(),
+			event: 'stopped',
+			body: {
+				reason: 'entry',
+				threadId: 1,
+				allThreadsStopped: true
+			}
+		});
 	});
 	/** Sequence counter for outgoing DAP messages. */
 	private nextSeq = 1;
@@ -690,6 +745,17 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 					request_seq: message.seq,
 					success: true,
 					command: 'configurationDone'
+				});
+				return;
+			case 'continue':
+				this.state.continueRuntime();
+				this.emit({
+					type: 'response',
+					seq: this.nextMessageSeq(),
+					request_seq: message.seq,
+					success: true,
+					command: 'continue',
+					body: { allThreadsContinued: true }
 				});
 				return;
 			case 'threads':

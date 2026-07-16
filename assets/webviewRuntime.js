@@ -62,6 +62,12 @@ const moduleReady = import(picorubyScriptUri)
 		printErr: (text) => console.error(text)
 	}))
 	.then((instance) => {
+		const runtimeState = {
+			isPaused: true,
+			hasSentStopped: false
+		};
+		instance.picorubyDebugState = runtimeState;
+
 		/**
 		 * Initializes PicoRuby and starts a cooperative scheduler loop.
 		 * The loop keeps running in idle mode and immediately processes queued tasks.
@@ -85,6 +91,9 @@ const moduleReady = import(picorubyScriptUri)
 			 * Executes one scheduler slice and re-schedules itself.
 			 */
 			function run() {
+				if (runtimeState.isPaused) {
+					return;
+				}
 				const now = performance.now();
 				let tickCount = 0;
 
@@ -116,11 +125,24 @@ const moduleReady = import(picorubyScriptUri)
 				setTimeout(run, delay);
 			}
 
+			instance.picorubyResume = () => {
+				if (!runtimeState.isPaused) {
+					return;
+				}
+
+				runtimeState.isPaused = false;
+				run();
+			};
+
 			run();
 		};
 		instance.picorubyRun();
 		console.log('PicoRuby WASM in WebView Loaded!');
 		vscode.postMessage({ type: 'ready' });
+		if (!runtimeState.hasSentStopped) {
+			runtimeState.hasSentStopped = true;
+			vscode.postMessage({ type: 'stopped' });
+		}
 		return instance;
 	})
 	.catch((error) => {
@@ -133,6 +155,14 @@ const moduleReady = import(picorubyScriptUri)
  */
 window.addEventListener('message', async (event) => {
 	const data = event.data;
+	if (data?.type === 'continue') {
+		const instance = await moduleReady;
+		if (typeof instance.picorubyResume === 'function') {
+			instance.picorubyResume();
+		}
+		return;
+	}
+
 	if (data?.type !== 'start') {
 		return;
 	}

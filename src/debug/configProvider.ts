@@ -19,7 +19,6 @@ export class PicoRubyWasmDebugConfigurationProvider implements vscode.DebugConfi
 		resolved.name = resolved.name ?? 'Launch PicoRuby WASM';
 		resolved.program = resolved.program ?? this.getDefaultProgram();
 		resolved.cwd = resolved.cwd ?? this.getDefaultCwd(folder);
-		resolved.stopOnEntry = resolved.stopOnEntry ?? true;
 
 		return resolved;
 	}
@@ -30,8 +29,7 @@ export class PicoRubyWasmDebugConfigurationProvider implements vscode.DebugConfi
 			type: DEBUG_TYPE,
 			request: 'launch',
 			program: this.getDefaultProgram(),
-			cwd: this.getDefaultCwd(folder),
-			stopOnEntry: true
+			cwd: this.getDefaultCwd(folder)
 		};
 	}
 

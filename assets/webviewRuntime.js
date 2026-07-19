@@ -58,10 +58,98 @@ const picorubyScriptUri = new URL('./picoruby.js', import.meta.url).toString();
  */
 const moduleReady = import(picorubyScriptUri)
 	.then(({ default: createModule }) => createModule({
-		print: (...args) => console.log(...args),
-		printErr: (...args) => console.error(...args)
+		print: (text) => console.log(text),
+		printErr: (text) => console.error(text)
 	}))
 	.then((instance) => {
+		const runtimeState = {
+			isPaused: true,
+			breakpoints: [],
+			debugPollInterval: null,
+			lastReportedPauseKey: null
+		};
+		instance.picorubyDebugState = runtimeState;
+
+		const safeParseJson = (text) => {
+			if (typeof text !== 'string') {
+				return null;
+			}
+
+			try {
+				return JSON.parse(text);
+			} catch {
+				return null;
+			}
+		};
+
+		const injectBindingIrb = (sourceCode, breakpoints) => {
+			const normalizedBreakpoints = new Set(
+				(Array.isArray(breakpoints) ? breakpoints : [])
+					.filter((line) => Number.isInteger(line) && line > 0)
+			);
+			const lines = sourceCode.split('\n');
+
+			for (let index = 0; index < lines.length; index += 1) {
+				const lineNumber = index + 1;
+				if (!normalizedBreakpoints.has(lineNumber)) {
+					continue;
+				}
+
+				const trimmed = lines[index].trimStart();
+				if (trimmed.length === 0 || trimmed.startsWith('#')) {
+					continue;
+				}
+
+				if (/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed)) {
+					continue;
+				}
+
+				lines[index] = `binding.irb; ${lines[index]}`;
+			}
+
+			return lines.join('\n');
+		};
+
+		const pollDebugStatus = () => {
+			try {
+				if (runtimeState.debugPollInterval === null) {
+					return;
+				}
+
+				if (typeof instance.ccall !== 'function' || typeof instance._mrb_debug_get_status === 'undefined') {
+					return;
+				}
+
+				const jsonStatus = instance.ccall('mrb_debug_get_status', 'string', [], []);
+				const status = safeParseJson(jsonStatus);
+				if (!status || typeof status !== 'object' || status.mode !== 'paused') {
+					return;
+				}
+
+				const line = Number.isInteger(status.line) && status.line > 0 ? status.line : undefined;
+				const pauseKey = Number.isInteger(status.pause_id)
+					? `pause:${status.pause_id}`
+					: `line:${line ?? 'unknown'}`;
+				if (pauseKey === runtimeState.lastReportedPauseKey) {
+					return;
+				}
+
+				runtimeState.lastReportedPauseKey = pauseKey;
+				runtimeState.isPaused = true;
+				vscode.postMessage({ type: 'stopped', reason: 'breakpoint', line });
+			} catch (error) {
+				console.error('mrb_debug_get_status polling failed', error);
+			}
+		};
+
+		const startDebugPolling = () => {
+			if (runtimeState.debugPollInterval !== null) {
+				return;
+			}
+
+			runtimeState.debugPollInterval = setInterval(pollDebugStatus, 200);
+		};
+
 		/**
 		 * Initializes PicoRuby and starts a cooperative scheduler loop.
 		 * The loop keeps running in idle mode and immediately processes queued tasks.
@@ -85,6 +173,9 @@ const moduleReady = import(picorubyScriptUri)
 			 * Executes one scheduler slice and re-schedules itself.
 			 */
 			function run() {
+				if (runtimeState.isPaused) {
+					return;
+				}
 				const now = performance.now();
 				let tickCount = 0;
 
@@ -116,11 +207,22 @@ const moduleReady = import(picorubyScriptUri)
 				setTimeout(run, delay);
 			}
 
+			instance.picorubyResume = () => {
+				if (!runtimeState.isPaused) {
+					return;
+				}
+
+				runtimeState.isPaused = false;
+				run();
+			};
+
 			run();
 		};
 		instance.picorubyRun();
+		startDebugPolling();
 		console.log('PicoRuby WASM in WebView Loaded!');
 		vscode.postMessage({ type: 'ready' });
+		instance.picorubyInjectBreakpoints = injectBindingIrb;
 		return instance;
 	})
 	.catch((error) => {
@@ -133,6 +235,30 @@ const moduleReady = import(picorubyScriptUri)
  */
 window.addEventListener('message', async (event) => {
 	const data = event.data;
+	if (data?.type === 'setBreakpoints') {
+		const instance = await moduleReady;
+		instance.picorubyDebugState.breakpoints = Array.isArray(data.breakpoints)
+			? data.breakpoints.filter((line) => Number.isInteger(line) && line > 0)
+			: [];
+		return;
+	}
+
+	if (data?.type === 'continue') {
+		const instance = await moduleReady;
+		if (typeof instance.ccall === 'function' && typeof instance._mrb_debug_continue !== 'undefined') {
+			try {
+				instance.ccall('mrb_debug_continue', 'string', [], []);
+			} catch (error) {
+				console.error('mrb_debug_continue failed', error);
+			}
+		}
+
+		instance.picorubyDebugState.lastReportedPauseKey = null;
+		if (typeof instance.picorubyResume === 'function') {
+			instance.picorubyResume();
+		}
+		return;
+	}
 
 	if (data?.type !== 'start') {
 		return;
@@ -140,10 +266,20 @@ window.addEventListener('message', async (event) => {
 
 	const instance = await moduleReady;
 	const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
+	const runtimeBreakpoints = Array.isArray(data.breakpoints)
+		? data.breakpoints.filter((line) => Number.isInteger(line) && line > 0)
+		: instance.picorubyDebugState.breakpoints;
+	instance.picorubyDebugState.breakpoints = runtimeBreakpoints;
+	const patchedCode = typeof instance.picorubyInjectBreakpoints === 'function'
+		? instance.picorubyInjectBreakpoints(receivedCode, runtimeBreakpoints)
+		: receivedCode;
 	console.log('Received start command from VS Code.');
-	console.log(receivedCode);
+	console.log(patchedCode);
 	try {
-		instance.ccall('picorb_create_task', 'number', ['string'], [receivedCode]);
+		instance.ccall('picorb_create_task', 'number', ['string'], [patchedCode]);
+		if (typeof instance.picorubyResume === 'function') {
+			instance.picorubyResume();
+		}
 	} catch (error) {
 		console.error('Failed to evaluate Ruby code in PicoRuby WASM', error);
 	}

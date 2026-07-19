@@ -70,6 +70,11 @@
         "title": "Disable PicoRuby for this workspace (remove .rb mapping)"
       }
     ],
+    "breakpoints": [
+      {
+        "language": "picoruby"
+      }
+    ],
     "debuggers": [
       {
         "type": "picoruby-wasm",
@@ -82,11 +87,6 @@
               "program": {
                 "type": "string",
                 "description": "Path to the HTML entrypoint that the mock debugger should launch."
-              },
-              "stopOnEntry": {
-                "type": "boolean",
-                "default": true,
-                "description": "Pause immediately after the mock runtime reports launch success."
               },
               "cwd": {
                 "type": "string",
@@ -108,8 +108,7 @@
             "type": "picoruby-wasm",
             "request": "launch",
             "program": "./index.html",
-            "cwd": "${workspaceFolder}",
-            "stopOnEntry": true
+            "cwd": "${workspaceFolder}"
           }
         ]
       }

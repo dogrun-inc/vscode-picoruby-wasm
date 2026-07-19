@@ -64,7 +64,6 @@ const moduleReady = import(picorubyScriptUri)
 	.then((instance) => {
 		const runtimeState = {
 			isPaused: true,
-			hasSentStopped: false,
 			breakpoints: [],
 			debugPollInterval: null,
 			lastReportedPauseKey: null
@@ -214,10 +213,6 @@ const moduleReady = import(picorubyScriptUri)
 		startDebugPolling();
 		console.log('PicoRuby WASM in WebView Loaded!');
 		vscode.postMessage({ type: 'ready' });
-		if (!runtimeState.hasSentStopped) {
-			runtimeState.hasSentStopped = true;
-			vscode.postMessage({ type: 'stopped', reason: 'entry', line: 1 });
-		}
 		instance.picorubyInjectBreakpoints = injectBindingIrb;
 		return instance;
 	})

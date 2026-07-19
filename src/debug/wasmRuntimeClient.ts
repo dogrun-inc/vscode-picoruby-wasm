@@ -2,7 +2,6 @@ export interface PicoRubyWasmLaunchRequest {
 	program?: string;
 	args?: string[];
 	cwd?: string;
-	stopOnEntry?: boolean;
 }
 
 export interface PicoRubyWasmMockEvent {

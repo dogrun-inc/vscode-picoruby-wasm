@@ -95,6 +95,15 @@ const moduleReady = import(picorubyScriptUri)
 					continue;
 				}
 
+				const trimmed = lines[index].trimStart();
+				if (trimmed.length === 0 || trimmed.startsWith('#')) {
+					continue;
+				}
+
+				if (/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed)) {
+					continue;
+				}
+
 				lines[index] = `binding.irb; ${lines[index]}`;
 			}
 

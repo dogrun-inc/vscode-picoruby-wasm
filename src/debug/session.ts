@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { randomBytes } from 'crypto';
 import {
@@ -237,6 +238,8 @@ class PicoRubyWasmMockSessionState {
 	private activeProgram = path.resolve(process.cwd(), 'index.html');
 	/** Current 1-based line used for stackTrace responses. */
 	private currentLine = 1;
+	/** Current source lines used to validate injectable breakpoint positions. */
+	private activeProgramLines: string[] = [];
 	/** WebView panel associated with this session. */
 	private webviewPanel: vscode.WebviewPanel | undefined;
 	/** Tracks whether the current WebView has finished WASM initialization. */
@@ -287,6 +290,7 @@ class PicoRubyWasmMockSessionState {
 		this.activeProgram = this.resolveProgramPath(args.program, args.cwd);
 		this.currentLine = 1;
 		this.pendingStartCode = await this.readProgramSource(this.activeProgram);
+		this.activeProgramLines = this.pendingStartCode.split('\n');
 		this.showWebviewPanel();
 		this.postStartMessageIfReady();
 		const result = await this.runtimeClient.launch(args);
@@ -307,6 +311,7 @@ class PicoRubyWasmMockSessionState {
 	 */
 	reset(): Promise<void> {
 		this.pendingStartCode = undefined;
+		this.activeProgramLines = [];
 		this.disposeWebviewPanel();
 		return this.runtimeClient.stop();
 	}
@@ -332,6 +337,56 @@ class PicoRubyWasmMockSessionState {
 			new Set(lines.filter((line) => Number.isInteger(line) && line > 0))
 		).sort((left, right) => left - right);
 		this.postBreakpointsIfReady();
+	}
+
+	/**
+	 * Resolves source lines used to validate breakpoint positions.
+	 *
+	 * @param sourcePath Source path from DAP setBreakpoints request.
+	 * @returns Source lines, or undefined when source cannot be resolved.
+	 */
+	resolveBreakpointValidationLines(sourcePath: string | undefined): string[] | undefined {
+		if (typeof sourcePath === 'string' && sourcePath.length > 0) {
+			try {
+				return readFileSync(sourcePath, 'utf8').split('\n');
+			} catch {
+				// Fall back to active program lines below.
+			}
+		}
+
+		if (this.activeProgramLines.length > 0) {
+			return this.activeProgramLines;
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Returns whether a source line can safely receive "binding.irb; " injection.
+	 *
+	 * @param line 1-based source line number.
+	 * @returns false for comments, empty lines, and control-flow keywords that would break Ruby syntax when prepended.
+	 */
+	isInjectableBreakpointLine(line: number, sourceLines: string[] | undefined): boolean {
+		if (!Number.isInteger(line) || line <= 0) {
+			return false;
+		}
+
+		if (sourceLines === undefined) {
+			return true;
+		}
+
+		const sourceLine = sourceLines[line - 1];
+		if (typeof sourceLine !== 'string') {
+			return false;
+		}
+
+		const trimmed = sourceLine.trimStart();
+		if (trimmed.length === 0 || trimmed.startsWith('#')) {
+			return false;
+		}
+
+		return !/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed);
 	}
 
 	/**
@@ -618,16 +673,30 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 * @param response DAP response object.
 	 * @param args Incoming breakpoint payload.
 	 */
-	protected setBreakpointsRequest(response: any, args: { breakpoints?: Array<{ line?: number; column?: number }> }): void {
+	protected setBreakpointsRequest(
+		response: any,
+		args: { source?: { path?: string }; breakpoints?: Array<{ line?: number; column?: number }> }
+	): void {
 		const requested = Array.isArray(args?.breakpoints) ? args.breakpoints : [];
-		this.state.updateBreakpoints(
-			requested
-				.map((bp) => bp?.line)
-				.filter((line): line is number => typeof line === 'number' && Number.isInteger(line) && line > 0)
-		);
+		const sourcePath = typeof args?.source?.path === 'string' ? args.source.path : undefined;
+		const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
+		const acceptedLines = requested
+			.map((bp) => bp?.line)
+			.filter(
+				(line): line is number =>
+					typeof line === 'number' &&
+					Number.isInteger(line) &&
+					line > 0 &&
+					this.state.isInjectableBreakpointLine(line, validationLines)
+			);
+		this.state.updateBreakpoints(acceptedLines);
+		const acceptedLineSet = new Set(acceptedLines);
 		response.body = {
 			breakpoints: requested.map((bp) => ({
-				verified: true,
+				verified:
+					typeof bp?.line === 'number' && Number.isInteger(bp.line)
+						? acceptedLineSet.has(bp.line)
+						: false,
 				line: typeof bp?.line === 'number' ? bp.line : undefined,
 				column: typeof bp?.column === 'number' ? bp.column : undefined
 			}))
@@ -829,11 +898,22 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				const requested = Array.isArray(message.arguments?.breakpoints)
 					? message.arguments.breakpoints
 					: [];
-				this.state.updateBreakpoints(
-					requested
-						.map((bp: { line?: number; column?: number }) => bp?.line)
-						.filter((line: unknown): line is number => typeof line === 'number' && Number.isInteger(line) && line > 0)
-				);
+				const sourcePath =
+					typeof message.arguments?.source?.path === 'string'
+						? message.arguments.source.path
+						: undefined;
+				const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
+				const acceptedLines = requested
+					.map((bp: { line?: number; column?: number }) => bp?.line)
+					.filter(
+						(line: unknown): line is number =>
+							typeof line === 'number' &&
+							Number.isInteger(line) &&
+							line > 0 &&
+							this.state.isInjectableBreakpointLine(line, validationLines)
+					);
+				this.state.updateBreakpoints(acceptedLines);
+				const acceptedLineSet = new Set(acceptedLines);
 				this.emit({
 					type: 'response',
 					seq: this.nextMessageSeq(),
@@ -842,7 +922,10 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 					command: 'setBreakpoints',
 					body: {
 						breakpoints: requested.map((bp: { line?: number; column?: number }) => ({
-							verified: true,
+							verified:
+								typeof bp?.line === 'number' && Number.isInteger(bp.line)
+									? acceptedLineSet.has(bp.line)
+									: false,
 							line: typeof bp?.line === 'number' ? bp.line : undefined,
 							column: typeof bp?.column === 'number' ? bp.column : undefined
 						}))

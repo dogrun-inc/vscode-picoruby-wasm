@@ -232,20 +232,27 @@ class PicoRubyWasmMockSessionState {
 	/** Callback used to forward logs received from the WebView. */
 	private readonly onWebviewLog: ((text: string) => void) | undefined;
 	/** Callback used to notify the adapter that runtime entered paused state. */
-	private readonly onRuntimeStopped: (() => void) | undefined;
+	private readonly onRuntimeStopped: ((reason: 'entry' | 'breakpoint', line?: number) => void) | undefined;
 	/** Absolute path to the currently active program. */
 	private activeProgram = path.resolve(process.cwd(), 'index.html');
+	/** Current 1-based line used for stackTrace responses. */
+	private currentLine = 1;
 	/** WebView panel associated with this session. */
 	private webviewPanel: vscode.WebviewPanel | undefined;
 	/** Tracks whether the current WebView has finished WASM initialization. */
 	private webviewReady = false;
 	/** Ruby source code waiting to be sent to the WebView runtime. */
 	private pendingStartCode: string | undefined;
+	/** 1-based breakpoint lines configured in VS Code. */
+	private configuredBreakpoints: number[] = [];
 
 	/**
 	 * @param onWebviewLog Callback that notifies the caller of log strings received from the WebView.
 	 */
-	constructor(onWebviewLog?: (text: string) => void, onRuntimeStopped?: () => void) {
+	constructor(
+		onWebviewLog?: (text: string) => void,
+		onRuntimeStopped?: (reason: 'entry' | 'breakpoint', line?: number) => void
+	) {
 		this.onWebviewLog = onWebviewLog;
 		this.onRuntimeStopped = onRuntimeStopped;
 	}
@@ -278,6 +285,7 @@ class PicoRubyWasmMockSessionState {
 	 */
 	async launch(args: PicoRubyWasmLaunchArguments): Promise<{ output: string }> {
 		this.activeProgram = this.resolveProgramPath(args.program, args.cwd);
+		this.currentLine = 1;
 		this.pendingStartCode = await this.readProgramSource(this.activeProgram);
 		this.showWebviewPanel();
 		this.postStartMessageIfReady();
@@ -307,19 +315,23 @@ class PicoRubyWasmMockSessionState {
 	 * Requests the WebView runtime to continue from a paused state.
 	 */
 	continueRuntime(): void {
-		console.log(
-            "[DEBUG] continueRuntime detailed check:",
-            "\n  - webviewPanel exists?", !!this.webviewPanel,
-            "\n  - webviewReady status?", this.webviewReady
-        );
 		if (!this.webviewPanel || !this.webviewReady) {
 			return;
 		}
 
-		this.webviewPanel.webview.postMessage({ type: 'continue' })
-		.then((success) => {
-			console.log("[DEBUG] continueRuntime: postMessage returned success =", success);
-		});
+		void this.webviewPanel.webview.postMessage({ type: 'continue' });
+	}
+
+	/**
+	 * Updates configured breakpoints and forwards them to WebView runtime when ready.
+	 *
+	 * @param lines 1-based line numbers.
+	 */
+	updateBreakpoints(lines: number[]): void {
+		this.configuredBreakpoints = Array.from(
+			new Set(lines.filter((line) => Number.isInteger(line) && line > 0))
+		).sort((left, right) => left - right);
+		this.postBreakpointsIfReady();
 	}
 
 	/**
@@ -350,15 +362,27 @@ class PicoRubyWasmMockSessionState {
 				return;
 			}
 
-			const receivedMessage = message as { type?: unknown; text?: unknown };
+			const receivedMessage = message as { type?: unknown; text?: unknown; reason?: unknown; line?: unknown };
 			if (receivedMessage.type === 'ready') {
 				this.webviewReady = true;
+				this.postBreakpointsIfReady();
 				this.postStartMessageIfReady();
 				return;
 			}
 
 			if (receivedMessage.type === 'stopped') {
-				this.onRuntimeStopped?.();
+				const reason =
+					receivedMessage.reason === 'breakpoint' || receivedMessage.reason === 'entry'
+						? receivedMessage.reason
+						: 'breakpoint';
+				const line =
+					typeof receivedMessage.line === 'number' && Number.isInteger(receivedMessage.line) && receivedMessage.line > 0
+						? receivedMessage.line
+						: undefined;
+				if (line !== undefined) {
+					this.currentLine = line;
+				}
+				this.onRuntimeStopped?.(reason, line);
 				return;
 			}
 
@@ -386,7 +410,22 @@ class PicoRubyWasmMockSessionState {
 		this.pendingStartCode = undefined;
 		void this.webviewPanel.webview.postMessage({
 			type: 'start',
-			code
+			code,
+			breakpoints: this.configuredBreakpoints
+		});
+	}
+
+	/**
+	 * Sends current breakpoints to WebView runtime.
+	 */
+	private postBreakpointsIfReady(): void {
+		if (!this.webviewPanel || !this.webviewReady) {
+			return;
+		}
+
+		void this.webviewPanel.webview.postMessage({
+			type: 'setBreakpoints',
+			breakpoints: this.configuredBreakpoints
 		});
 	}
 
@@ -444,7 +483,7 @@ class PicoRubyWasmMockSessionState {
 			{
 				id: 1,
 				name: 'mock main',
-				line: 1,
+				line: this.currentLine,
 				column: 1,
 				source: {
 					name: path.basename(this.activeProgram),
@@ -516,11 +555,13 @@ class PicoRubyWasmMockSessionState {
  * Responds to Debug Adapter Protocol requests and emits the required events.
  */
 export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
+	private static readonly THREAD_ID = 1;
+
 	/** Shared session state with a callback that forwards WebView logs to the Debug Console. */
 	private readonly state = new PicoRubyWasmMockSessionState((text) => {
 		this.sendEvent(new OutputEvent(formatWebviewLogOutput(text), 'console'));
-	}, () => {
-		const event = new StoppedEvent('entry', 1);
+	}, (reason) => {
+		const event = new StoppedEvent(reason, PicoRubyWasmLoggingDebugSession.THREAD_ID);
 		Object.assign(event.body, { allThreadsStopped: true });
 		this.sendEvent(event);
 	});
@@ -568,6 +609,29 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	protected continueRequest(response: any, _args: any): void {
 		this.state.continueRuntime();
 		response.body = { allThreadsContinued: true };
+		this.sendResponse(response);
+	}
+
+	/**
+	 * Handles DAP setBreakpoints requests.
+	 *
+	 * @param response DAP response object.
+	 * @param args Incoming breakpoint payload.
+	 */
+	protected setBreakpointsRequest(response: any, args: { breakpoints?: Array<{ line?: number; column?: number }> }): void {
+		const requested = Array.isArray(args?.breakpoints) ? args.breakpoints : [];
+		this.state.updateBreakpoints(
+			requested
+				.map((bp) => bp?.line)
+				.filter((line): line is number => typeof line === 'number' && Number.isInteger(line) && line > 0)
+		);
+		response.body = {
+			breakpoints: requested.map((bp) => ({
+				verified: true,
+				line: typeof bp?.line === 'number' ? bp.line : undefined,
+				column: typeof bp?.column === 'number' ? bp.column : undefined
+			}))
+		};
 		this.sendResponse(response);
 	}
 
@@ -641,6 +705,8 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
  * Exchanges DebugProtocolMessage objects directly without LoggingDebugSession.
  */
 class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
+	private static readonly THREAD_ID = 1;
+
 	/** Event emitter used to send DAP messages back to VS Code. */
 	private readonly emitter = new vscode.EventEmitter<vscode.DebugProtocolMessage>();
 	/** Shared session state that forwards WebView logs as output events. */
@@ -654,14 +720,15 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				output: formatWebviewLogOutput(text)
 			}
 		});
-	}, () => {
+	}, (reason, line) => {
 		this.emit({
 			type: 'event',
 			seq: this.nextMessageSeq(),
 			event: 'stopped',
 			body: {
-				reason: 'entry',
-				threadId: 1,
+				reason,
+				threadId: PicoRubyWasmInlineDebugAdapter.THREAD_ID,
+				line,
 				allThreadsStopped: true
 			}
 		});
@@ -758,6 +825,31 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 					body: { allThreadsContinued: true }
 				});
 				return;
+			case 'setBreakpoints': {
+				const requested = Array.isArray(message.arguments?.breakpoints)
+					? message.arguments.breakpoints
+					: [];
+				this.state.updateBreakpoints(
+					requested
+						.map((bp: { line?: number; column?: number }) => bp?.line)
+						.filter((line: unknown): line is number => typeof line === 'number' && Number.isInteger(line) && line > 0)
+				);
+				this.emit({
+					type: 'response',
+					seq: this.nextMessageSeq(),
+					request_seq: message.seq,
+					success: true,
+					command: 'setBreakpoints',
+					body: {
+						breakpoints: requested.map((bp: { line?: number; column?: number }) => ({
+							verified: true,
+							line: typeof bp?.line === 'number' ? bp.line : undefined,
+							column: typeof bp?.column === 'number' ? bp.column : undefined
+						}))
+					}
+				});
+				return;
+			}
 			case 'threads':
 				this.emit({
 					type: 'response',

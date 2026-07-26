@@ -328,6 +328,43 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
+	 * Requests the WebView runtime to execute one step-over operation.
+	 */
+	nextRuntime(): void {
+		if (!this.webviewPanel || !this.webviewReady) {
+			return;
+		}
+
+		void this.webviewPanel.webview.postMessage({ type: 'next' });
+	}
+
+	/**
+	 * Requests the WebView runtime to execute one step-in operation.
+	 */
+	stepInRuntime(): void {
+		if (!this.webviewPanel || !this.webviewReady) {
+			return;
+		}
+
+		void this.webviewPanel.webview.postMessage({ type: 'stepIn' });
+	}
+
+	/**
+	 * Requests runtime termination and then resets adapter-side resources.
+	 */
+	async terminateRuntime(): Promise<void> {
+		if (this.webviewPanel && this.webviewReady) {
+			try {
+				await this.webviewPanel.webview.postMessage({ type: 'terminate' });
+			} catch {
+				// Ignore postMessage failures and continue with local cleanup.
+			}
+		}
+
+		await this.reset();
+	}
+
+	/**
 	 * Updates configured breakpoints and forwards them to WebView runtime when ready.
 	 *
 	 * @param lines 1-based line numbers.
@@ -668,6 +705,26 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	}
 
 	/**
+	 * Handles DAP next (step over) requests.
+	 *
+	 * @param response DAP response object.
+	 */
+	protected nextRequest(response: any): void {
+		this.state.nextRuntime();
+		this.sendResponse(response);
+	}
+
+	/**
+	 * Handles DAP stepIn requests.
+	 *
+	 * @param response DAP response object.
+	 */
+	protected stepInRequest(response: any): void {
+		this.state.stepInRuntime();
+		this.sendResponse(response);
+	}
+
+	/**
 	 * Handles DAP setBreakpoints requests.
 	 *
 	 * @param response DAP response object.
@@ -763,7 +820,18 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 * @param response DAP response object.
 	 */
 	protected disconnectRequest(response: any): void {
-		void this.state.reset();
+		void this.state.terminateRuntime();
+		this.sendEvent(new TerminatedEvent());
+		this.sendResponse(response);
+	}
+
+	/**
+	 * Handles DAP terminate requests and terminates the session.
+	 *
+	 * @param response DAP response object.
+	 */
+	protected terminateRequest(response: any): void {
+		void this.state.terminateRuntime();
 		this.sendEvent(new TerminatedEvent());
 		this.sendResponse(response);
 	}
@@ -894,6 +962,26 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 					body: { allThreadsContinued: true }
 				});
 				return;
+			case 'next':
+				this.state.nextRuntime();
+				this.emit({
+					type: 'response',
+					seq: this.nextMessageSeq(),
+					request_seq: message.seq,
+					success: true,
+					command: 'next'
+				});
+				return;
+			case 'stepIn':
+				this.state.stepInRuntime();
+				this.emit({
+					type: 'response',
+					seq: this.nextMessageSeq(),
+					request_seq: message.seq,
+					success: true,
+					command: 'stepIn'
+				});
+				return;
 			case 'setBreakpoints': {
 				const requested = Array.isArray(message.arguments?.breakpoints)
 					? message.arguments.breakpoints
@@ -984,7 +1072,7 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				});
 				return;
 			case 'disconnect':
-				void this.state.reset();
+				void this.state.terminateRuntime();
 				this.emit({ type: 'event', seq: this.nextMessageSeq(), event: 'terminated' });
 				this.emit({
 					type: 'response',
@@ -992,6 +1080,17 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 					request_seq: message.seq,
 					success: true,
 					command: 'disconnect'
+				});
+				return;
+			case 'terminate':
+				void this.state.terminateRuntime();
+				this.emit({ type: 'event', seq: this.nextMessageSeq(), event: 'terminated' });
+				this.emit({
+					type: 'response',
+					seq: this.nextMessageSeq(),
+					request_seq: message.seq,
+					success: true,
+					command: 'terminate'
 				});
 				return;
 			default:

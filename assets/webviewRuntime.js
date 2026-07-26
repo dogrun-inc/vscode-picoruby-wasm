@@ -235,6 +235,23 @@ const moduleReady = import(picorubyScriptUri)
  */
 window.addEventListener('message', async (event) => {
 	const data = event.data;
+	const executeDebugCommand = (instance, commandName, exportName) => {
+		if (typeof instance.ccall !== 'function' || typeof instance[exportName] === 'undefined') {
+			return;
+		}
+
+		try {
+			instance.ccall(commandName, 'string', [], []);
+		} catch (error) {
+			console.error(`${commandName} failed`, error);
+		}
+
+		instance.picorubyDebugState.lastReportedPauseKey = null;
+		if (typeof instance.picorubyResume === 'function') {
+			instance.picorubyResume();
+		}
+	};
+
 	if (data?.type === 'setBreakpoints') {
 		const instance = await moduleReady;
 		instance.picorubyDebugState.breakpoints = Array.isArray(data.breakpoints)
@@ -245,18 +262,24 @@ window.addEventListener('message', async (event) => {
 
 	if (data?.type === 'continue') {
 		const instance = await moduleReady;
-		if (typeof instance.ccall === 'function' && typeof instance._mrb_debug_continue !== 'undefined') {
-			try {
-				instance.ccall('mrb_debug_continue', 'string', [], []);
-			} catch (error) {
-				console.error('mrb_debug_continue failed', error);
-			}
-		}
+		executeDebugCommand(instance, 'mrb_debug_continue', '_mrb_debug_continue');
+		return;
+	}
 
-		instance.picorubyDebugState.lastReportedPauseKey = null;
-		if (typeof instance.picorubyResume === 'function') {
-			instance.picorubyResume();
-		}
+	if (data?.type === 'next') {
+		const instance = await moduleReady;
+		executeDebugCommand(instance, 'mrb_debug_next', '_mrb_debug_next');
+		return;
+	}
+
+	if (data?.type === 'stepIn') {
+		const instance = await moduleReady;
+		executeDebugCommand(instance, 'mrb_debug_step', '_mrb_debug_step');
+		return;
+	}
+
+	if (data?.type === 'terminate') {
+		location.reload();
 		return;
 	}
 

@@ -234,6 +234,8 @@ class PicoRubyWasmMockSessionState {
 	private readonly onWebviewLog: ((text: string) => void) | undefined;
 	/** Callback used to notify the adapter that runtime entered paused state. */
 	private readonly onRuntimeStopped: ((reason: 'entry' | 'breakpoint', line?: number) => void) | undefined;
+	/** Callback used to notify the adapter that runtime execution has terminated. */
+	private readonly onRuntimeTerminated: (() => void) | undefined;
 	/** Absolute path to the currently active program. */
 	private activeProgram = path.resolve(process.cwd(), 'index.html');
 	/** Current 1-based line used for stackTrace responses. */
@@ -254,10 +256,12 @@ class PicoRubyWasmMockSessionState {
 	 */
 	constructor(
 		onWebviewLog?: (text: string) => void,
-		onRuntimeStopped?: (reason: 'entry' | 'breakpoint', line?: number) => void
+		onRuntimeStopped?: (reason: 'entry' | 'breakpoint', line?: number) => void,
+		onRuntimeTerminated?: () => void
 	) {
 		this.onWebviewLog = onWebviewLog;
 		this.onRuntimeStopped = onRuntimeStopped;
+		this.onRuntimeTerminated = onRuntimeTerminated;
 	}
 
 	/**
@@ -320,33 +324,47 @@ class PicoRubyWasmMockSessionState {
 	 * Requests the WebView runtime to continue from a paused state.
 	 */
 	continueRuntime(): void {
-		if (!this.webviewPanel || !this.webviewReady) {
-			return;
-		}
-
-		void this.webviewPanel.webview.postMessage({ type: 'continue' });
+		this.postControlMessage('continue');
 	}
 
 	/**
 	 * Requests the WebView runtime to execute one step-over operation.
 	 */
 	nextRuntime(): void {
-		if (!this.webviewPanel || !this.webviewReady) {
-			return;
-		}
-
-		void this.webviewPanel.webview.postMessage({ type: 'next' });
+		this.postControlMessage('next');
 	}
 
 	/**
 	 * Requests the WebView runtime to execute one step-in operation.
 	 */
 	stepInRuntime(): void {
-		if (!this.webviewPanel || !this.webviewReady) {
+		this.postControlMessage('stepIn');
+	}
+
+	/**
+	 * Sends a control command to the runtime webview and logs delivery outcome.
+	 *
+	 * @param type Control message type.
+	 */
+	private postControlMessage(type: 'continue' | 'next' | 'stepIn' | 'terminate'): void {
+		if (!this.webviewPanel) {
+			this.onWebviewLog?.(`[adapter] dropped '${type}' command: webview panel not available`);
 			return;
 		}
 
-		void this.webviewPanel.webview.postMessage({ type: 'stepIn' });
+		if (!this.webviewReady) {
+			this.onWebviewLog?.(`[adapter] dropped '${type}' command: webview not ready`);
+			return;
+		}
+
+		void this.webviewPanel.webview.postMessage({ type }).then((posted) => {
+			if (!posted) {
+				this.onWebviewLog?.(`[adapter] webview declined '${type}' command`);
+			}
+		}, (error: unknown) => {
+			const message = error instanceof Error ? error.message : String(error);
+			this.onWebviewLog?.(`[adapter] failed to post '${type}' command: ${message}`);
+		});
 	}
 
 	/**
@@ -475,6 +493,11 @@ class PicoRubyWasmMockSessionState {
 					this.currentLine = line;
 				}
 				this.onRuntimeStopped?.(reason, line);
+				return;
+			}
+
+			if (receivedMessage.type === 'terminated') {
+				this.onRuntimeTerminated?.();
 				return;
 			}
 
@@ -656,6 +679,9 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 		const event = new StoppedEvent(reason, PicoRubyWasmLoggingDebugSession.THREAD_ID);
 		Object.assign(event.body, { allThreadsStopped: true });
 		this.sendEvent(event);
+	}, () => {
+		void this.state.reset();
+		this.sendEvent(new TerminatedEvent());
 	});
 
 	/**
@@ -869,6 +895,9 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				allThreadsStopped: true
 			}
 		});
+	}, () => {
+		void this.state.reset();
+		this.emit({ type: 'event', seq: this.nextMessageSeq(), event: 'terminated' });
 	});
 	/** Sequence counter for outgoing DAP messages. */
 	private nextSeq = 1;

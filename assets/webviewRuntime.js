@@ -20,6 +20,24 @@ const stringifyLogValue = (value) => {
 };
 
 /**
+ * Safely parses JSON strings.
+ * 
+ * @param {string} text JSON string to parse.
+ * @returns {any|null} Parsed object or null if parsing fails.
+ */
+const safeParseJson = (text) => {
+    if (typeof text !== 'string') {
+        return null;
+    }
+
+    try {
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
+};
+
+/**
  * Forwards a single log line to the extension host.
  *
  * @param {string} text Log text.
@@ -64,23 +82,12 @@ const moduleReady = import(picorubyScriptUri)
 	.then((instance) => {
 		const runtimeState = {
 			isPaused: true,
+            pauseId: null,
 			breakpoints: [],
 			debugPollInterval: null,
-			lastReportedPauseKey: null
+            sessionStarted: false
 		};
 		instance.picorubyDebugState = runtimeState;
-
-		const safeParseJson = (text) => {
-			if (typeof text !== 'string') {
-				return null;
-			}
-
-			try {
-				return JSON.parse(text);
-			} catch {
-				return null;
-			}
-		};
 
 		const injectBindingIrb = (sourceCode, breakpoints) => {
 			const normalizedBreakpoints = new Set(
@@ -122,21 +129,30 @@ const moduleReady = import(picorubyScriptUri)
 
 				const jsonStatus = instance.ccall('mrb_debug_get_status', 'string', [], []);
 				const status = safeParseJson(jsonStatus);
-				if (!status || typeof status !== 'object' || status.mode !== 'paused') {
+                if (!status || typeof status !== 'object') {
 					return;
 				}
 
+                // 1. 一時停止の検知（panel.js と同様に pause_id の変化で判定）
+                if (status.mode === 'paused') {
+                    const currentPauseId = status.pause_id ?? `line:${status.line}`;
+                    if (currentPauseId !== runtimeState.pauseId) {
+                        runtimeState.pauseId = currentPauseId;
+                        runtimeState.isPaused = true;
 				const line = Number.isInteger(status.line) && status.line > 0 ? status.line : undefined;
-				const pauseKey = Number.isInteger(status.pause_id)
-					? `pause:${status.pause_id}`
-					: `line:${line ?? 'unknown'}`;
-				if (pauseKey === runtimeState.lastReportedPauseKey) {
+                        vscode.postMessage({ type: 'stopped', reason: 'breakpoint', line });
+                    }
 					return;
 				}
 
-				runtimeState.lastReportedPauseKey = pauseKey;
-				runtimeState.isPaused = true;
-				vscode.postMessage({ type: 'stopped', reason: 'breakpoint', line });
+                // 2. プログラム完走（終了）の検知
+                if (status.mode === 'idle' || status.mode === 'terminated') {
+                    if (runtimeState.sessionStarted) {
+                        runtimeState.sessionStarted = false;
+                        vscode.postMessage({ type: 'terminated' });
+                    }
+                    return;
+                }
 			} catch (error) {
 				console.error('mrb_debug_get_status polling failed', error);
 			}
@@ -150,10 +166,6 @@ const moduleReady = import(picorubyScriptUri)
 			runtimeState.debugPollInterval = setInterval(pollDebugStatus, 200);
 		};
 
-		/**
-		 * Initializes PicoRuby and starts a cooperative scheduler loop.
-		 * The loop keeps running in idle mode and immediately processes queued tasks.
-		 */
 		instance.ccall('picorb_init', 'number', [], []);
 		instance.picorubyRun = function() {
 			const MRB_TICK_UNIT = 4;
@@ -246,7 +258,7 @@ window.addEventListener('message', async (event) => {
 			console.error(`${commandName} failed`, error);
 		}
 
-		instance.picorubyDebugState.lastReportedPauseKey = null;
+        instance.picorubyDebugState.pauseId = null;
 		if (typeof instance.picorubyResume === 'function') {
 			instance.picorubyResume();
 		}
@@ -288,6 +300,8 @@ window.addEventListener('message', async (event) => {
 	}
 
 	const instance = await moduleReady;
+    instance.picorubyDebugState.sessionStarted = true;
+
 	const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
 	const runtimeBreakpoints = Array.isArray(data.breakpoints)
 		? data.breakpoints.filter((line) => Number.isInteger(line) && line > 0)

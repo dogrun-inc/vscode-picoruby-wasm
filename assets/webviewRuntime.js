@@ -84,7 +84,7 @@ const moduleReady = import(picorubyScriptUri)
 			isPaused: true,
 			breakpoints: [],
 			debugPollInterval: null,
-			lastReportedPauseKey: null,
+			pauseId: null,
 			terminatedNotified: false,
 			sessionStarted: false,
 			idleNoProgressTicks: 0
@@ -121,20 +121,13 @@ const moduleReady = import(picorubyScriptUri)
 
 		const TERMINAL_MODES = new Set(['idle', 'terminated', 'finished', 'exited', 'completed', 'done']);
 
-		const buildPauseKey = (status) => {
-			const line = Number.isInteger(status?.line) && status.line > 0 ? status.line : undefined;
-			if (Number.isInteger(status?.pause_id)) {
-				return { pauseKey: `pause:${status.pause_id}:line:${line ?? 'unknown'}`, line };
-			}
-
-			return { pauseKey: `line:${line ?? 'unknown'}`, line };
-		};
-
 		const notifyStoppedFromStatus = (status) => {
-			const { pauseKey, line } = buildPauseKey(status);
-			runtimeState.lastReportedPauseKey = pauseKey;
+			const currentPauseId = status.pause_id ?? `line:${status.line}`;
+			runtimeState.pauseId = currentPauseId;
 			runtimeState.isPaused = true;
 			runtimeState.idleNoProgressTicks = 0;
+
+			const line = Number.isInteger(status?.line) && status.line > 0 ? status.line : undefined;
 			vscode.postMessage({ type: 'stopped', reason: 'breakpoint', line });
 		};
 
@@ -179,8 +172,8 @@ const moduleReady = import(picorubyScriptUri)
 					return;
 				}
 
-				const { pauseKey } = buildPauseKey(status);
-				if (pauseKey === runtimeState.lastReportedPauseKey) {
+				const currentPauseId = status.pause_id ?? `line:${status.line}`;
+				if (currentPauseId === runtimeState.pauseId) {
                     return;
                 }
 
@@ -217,7 +210,6 @@ const moduleReady = import(picorubyScriptUri)
 			 * Executes one scheduler slice and re-schedules itself.
 			 */
 			function run() {
-				// 一時停止中は Tick を進めず、無進捗カウントも増やさない
 				if (runtimeState.isPaused) {
 					return;
 				}
@@ -249,7 +241,7 @@ const moduleReady = import(picorubyScriptUri)
 					progressed = true;
 				}
 
-				// 実行中（isPaused === false）に進捗が止まった場合の終了判定
+				// 進捗がない場合の完走・停止チェック
 				if (!progressed && gcSchedulerPending() !== 1 && runtimeState.sessionStarted) {
 					try {
 						if (typeof instance.ccall === 'function' && typeof instance._mrb_debug_get_status !== 'undefined') {
@@ -257,13 +249,14 @@ const moduleReady = import(picorubyScriptUri)
 							const status = safeParseJson(jsonStatus);
 							
 							if (status && typeof status === 'object') {
-								// 一時停止状態になった場合（※ここで isPaused = true にするため起動直後の即終了を防げます）
 								if (status.mode === 'paused') {
+									const currentPauseId = status.pause_id ?? `line:${status.line}`;
+									if (currentPauseId !== runtimeState.pauseId) {
 									notifyStoppedFromStatus(status);
+									}
 									return;
 								}
 
-								// 明示的に終了ステータスになった場合
 								if (isTerminalStatus(status)) {
 									notifyTerminatedOnce();
 									return;
@@ -274,7 +267,6 @@ const moduleReady = import(picorubyScriptUri)
 						console.error('run-loop status check failed', error);
 					}
 
-					// 一時停止でもなく、コードの進捗も出なくなった（完走した）場合、10ターンでデバッグ終了
 					runtimeState.idleNoProgressTicks += 1;
 					if (runtimeState.idleNoProgressTicks >= 10) {
 						notifyTerminatedOnce();
@@ -326,7 +318,7 @@ window.addEventListener('message', async (event) => {
 		}
 
 		const runtimeState = instance.picorubyDebugState;
-		runtimeState.lastReportedPauseKey = null;
+		runtimeState.pauseId = null;
 		runtimeState.terminatedNotified = false;
 		runtimeState.idleNoProgressTicks = 0;
 		runtimeState.isPaused = false;
@@ -379,7 +371,7 @@ window.addEventListener('message', async (event) => {
 		? data.breakpoints.filter((line) => Number.isInteger(line) && line > 0)
 		: instance.picorubyDebugState.breakpoints;
 
-	instance.picorubyDebugState.lastReportedPauseKey = null;
+	instance.picorubyDebugState.pauseId = null;
 	instance.picorubyDebugState.terminatedNotified = false;
 	instance.picorubyDebugState.sessionStarted = false;
 	instance.picorubyDebugState.idleNoProgressTicks = 0;

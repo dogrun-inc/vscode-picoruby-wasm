@@ -1,8 +1,6 @@
 const vscode = typeof acquireVsCodeApi === 'function'
 	? acquireVsCodeApi()
-	: (typeof window !== 'undefined' && typeof window.acquireVsCodeApi === 'function'
-		? window.acquireVsCodeApi()
-		: { postMessage: () => {} });
+	: { postMessage: () => {} };
 
 /**
  * Converts a console argument into a loggable string.
@@ -97,8 +95,8 @@ const loadPicorubyModule = () => {
 		});
 	}
 
-	// ブラウザ (Webview) 環境では通常通り動的インポートを実行
-	return eval('import(picorubyScriptUri)');
+	// ブラウザ (Webview) 環境では相対パスで picoruby.js を動的インポートする
+	return import('./picoruby.js');
 };
 
 /**

@@ -166,10 +166,10 @@ const moduleReady = loadPicorubyModule()
 			}
 
 			runtimeState.terminatedNotified = true;
+			runtimeState.sessionStarted = false;
 			runtimeState.isPaused = true;
 			runtimeState.idleNoProgressTicks = 0;
 			vscode.postMessage({ type: 'terminated' });
-		};
 
 		const isTerminalStatus = (status) => {
 			const mode = typeof status?.mode === 'string' ? status.mode.toLowerCase() : '';

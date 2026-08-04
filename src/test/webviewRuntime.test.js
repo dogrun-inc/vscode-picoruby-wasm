@@ -31,11 +31,6 @@ describe('webviewRuntime.js Test Suite', () => {
             picorubyDebugState: {}
         };
 
-        // dynamic import ('./picoruby.js') のモック設定
-        jest.mock('../src/picoruby.js', () => ({
-            __esModule: true,
-            default: jest.fn().mockResolvedValue(mockModule)
-        }), { virtual: true });
 
         // window.addEventListener のキャプチャ
         const originalAddEventListener = window.addEventListener.bind(window);

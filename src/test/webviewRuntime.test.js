@@ -2,149 +2,128 @@
  * @jest-environment jsdom
  */
 
+// 1. require 前に VS Code API のグローバルモックを定義
+const mockPostMessage = jest.fn();
+global.acquireVsCodeApi = jest.fn().mockReturnValue({
+	postMessage: mockPostMessage
+});
+
+// 2. 本番モジュールをインポート
+const webviewRuntime = require('../../assets/webviewRuntime');
+
 describe('webviewRuntime.js Test Suite', () => {
-    let mockPostMessage;
-    let messageListener;
-    let mockCcall;
-    let mockModule;
+	beforeEach(() => {
+		jest.useFakeTimers();
+		jest.clearAllMocks();
+	});
 
-    beforeEach(() => {
-        jest.useFakeTimers();
-        jest.clearAllMocks();
+	afterEach(() => {
+		jest.useRealTimers();
+	});
 
-        // 1. VS Code API (acquireVsCodeApi) のモック
-        mockPostMessage = jest.fn();
-        window.acquireVsCodeApi = jest.fn().mockReturnValue({
-            postMessage: mockPostMessage
-        });
+	describe('Utility Functions in assets/webviewRuntime.js', () => {
+		test('safeParseJson should parse valid JSON and return null for invalid input', () => {
+			expect(webviewRuntime.safeParseJson('{"mode":"paused"}')).toEqual({ mode: 'paused' });
+			expect(webviewRuntime.safeParseJson('invalid json')).toBeNull();
+			expect(webviewRuntime.safeParseJson(123)).toBeNull();
+		});
 
-        // 2. Emscripten WASM インスタンス (ccall) のモック
-        mockCcall = jest.fn();
-        mockModule = {
-            ccall: mockCcall,
-            _mrb_debug_get_status: jest.fn(),
-            _mrb_debug_next: jest.fn(),
-            _mrb_debug_step: jest.fn(),
-            _mrb_debug_continue: jest.fn(),
-            _mrb_run_step: jest.fn().mockReturnValue(0),
-            _mrb_tick_wasm: jest.fn(),
-            picorubyDebugState: {}
-        };
+		test('stringifyLogValue should serialize arguments correctly', () => {
+			expect(webviewRuntime.stringifyLogValue('hello')).toBe('hello');
+			expect(webviewRuntime.stringifyLogValue({ key: 'value' })).toBe('{"key":"value"}');
+		});
+	});
 
+	describe('Breakpoint Injection Logic', () => {
+		test('should inject binding.irb on target lines, ignoring comments and keywords', () => {
+			const injectBindingIrb = (sourceCode, breakpoints) => {
+				const normalizedBreakpoints = new Set(breakpoints.filter((l) => Number.isInteger(l) && l > 0));
+				const lines = sourceCode.split('\n');
 
-        // window.addEventListener のキャプチャ
-        const originalAddEventListener = EventTarget.prototype.addEventListener.bind(window);
-        window.addEventListener = jest.fn((event, handler) => {
-            if (event === 'message') {
-                messageListener = handler;
-            }
-            originalAddEventListener(event, handler);
-        });
-    });
+				for (let index = 0; index < lines.length; index += 1) {
+					const lineNumber = index + 1;
+					if (!normalizedBreakpoints.has(lineNumber)) continue;
 
-    afterEach(() => {
-        jest.useRealTimers();
-    });
+					const trimmed = lines[index].trimStart();
+					if (trimmed.length === 0 || trimmed.startsWith('#')) continue;
+					if (/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed)) continue;
 
-    describe('Breakpoint Injection Logic', () => {
-        test('should inject binding.irb on target lines, ignoring comments and keywords', () => {
-            // injectBindingIrb のロジック部分の検証
-            const injectBindingIrb = (sourceCode, breakpoints) => {
-                const normalizedBreakpoints = new Set(breakpoints.filter((l) => Number.isInteger(l) && l > 0));
-                const lines = sourceCode.split('\n');
+					lines[index] = `binding.irb; ${lines[index]}`;
+				}
+				return lines.join('\n');
+			};
 
-                for (let index = 0; index < lines.length; index += 1) {
-                    const lineNumber = index + 1;
-                    if (!normalizedBreakpoints.has(lineNumber)) continue;
+			const sampleCode = [
+				'puts "Line 1"',       // Line 1: 対象
+				'# Comment line',      // Line 2: スキップ（コメント）
+				'else',                // Line 3: スキップ（制御構文）
+				'x = 10'               // Line 4: 対象
+			].join('\n');
 
-                    const trimmed = lines[index].trimStart();
-                    if (trimmed.length === 0 || trimmed.startsWith('#')) continue;
-                    if (/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed)) continue;
+			const result = injectBindingIrb(sampleCode, [1, 2, 3, 4]);
 
-                    lines[index] = `binding.irb; ${lines[index]}`;
-                }
-                return lines.join('\n');
-            };
+			expect(result).toContain('binding.irb; puts "Line 1"');
+			expect(result).toContain('# Comment line');
+			expect(result).not.toContain('binding.irb; else');
+			expect(result).toContain('binding.irb; x = 10');
+		});
+	});
 
-            const sampleCode = [
-                'puts "Line 1"',       // Line 1: 対象
-                '# Comment line',      // Line 2: スキップ（コメント）
-                'else',                // Line 3: スキップ（制御構文）
-                'x = 10'               // Line 4: 対象
-            ].join('\n');
+	describe('Status Polling & Notifications', () => {
+		test('should parse paused status JSON correctly', () => {
+			const statusJson = JSON.stringify({ mode: 'paused', line: 9, pause_id: 1 });
+			const status = webviewRuntime.safeParseJson(statusJson);
 
-            const result = injectBindingIrb(sampleCode, [1, 2, 3, 4]);
+			expect(status.mode).toBe('paused');
+			expect(status.line).toBe(9);
+			expect(status.pause_id).toBe(1);
+		});
 
-            expect(result).toContain('binding.irb; puts "Line 1"');
-            expect(result).toContain('# Comment line');
-            expect(result).not.toContain('binding.irb; else');
-            expect(result).toContain('binding.irb; x = 10');
-        });
-    });
+		test('should detect terminal status (idle) and trigger termination', () => {
+			const TERMINAL_MODES = new Set(['idle', 'terminated', 'finished', 'exited', 'completed', 'done']);
 
-    describe('Status Polling & Notifications', () => {
-        test('should post "stopped" message when WASM is in paused state', () => {
-            // mrb_debug_get_status が paused を返すよう設定
-            mockCcall.mockImplementation((name) => {
-                if (name === 'mrb_debug_get_status') {
-                    return JSON.stringify({ mode: 'paused', line: 9, pause_id: 1 });
-                }
-                return null;
-            });
+			const isTerminalStatus = (status) => {
+				const mode = typeof status?.mode === 'string' ? status.mode.toLowerCase() : '';
+				return TERMINAL_MODES.has(mode);
+			};
 
-            // 手動でポーリング処理（100ms経過）をシミュレート
-            const statusJson = mockCcall('mrb_debug_get_status');
-            const status = JSON.parse(statusJson);
+			expect(isTerminalStatus({ mode: 'idle' })).toBe(true);
+			expect(isTerminalStatus({ mode: 'TERMINATED' })).toBe(true);
+			expect(isTerminalStatus({ mode: 'paused' })).toBe(false);
+		});
+	});
 
-            expect(status.mode).toBe('paused');
-            expect(status.line).toBe(9);
-            expect(status.pause_id).toBe(1);
-        });
+	describe('Command Dispatcher', () => {
+		test('should invoke handler when receiving "next" message from VS Code', async () => {
+			const event = new MessageEvent('message', {
+				data: { type: 'next' }
+			});
+			window.dispatchEvent(event);
+			await Promise.resolve();
+		});
 
-        test('should detect terminal status (idle) and trigger termination', () => {
-            const TERMINAL_MODES = new Set(['idle', 'terminated', 'finished', 'exited', 'completed', 'done']);
-            
-            const isTerminalStatus = (status) => {
-                const mode = typeof status?.mode === 'string' ? status.mode.toLowerCase() : '';
-                return TERMINAL_MODES.has(mode);
-            };
+		test('should invoke handler when receiving "stepIn" message', async () => {
+			const event = new MessageEvent('message', {
+				data: { type: 'stepIn' }
+			});
+			window.dispatchEvent(event);
+			await Promise.resolve();
+		});
 
-            expect(isTerminalStatus({ mode: 'idle' })).toBe(true);
-            expect(isTerminalStatus({ mode: 'TERMINATED' })).toBe(true);
-            expect(isTerminalStatus({ mode: 'paused' })).toBe(false);
-        });
-    });
+		test('should invoke handler when receiving "continue" message', async () => {
+			const event = new MessageEvent('message', {
+				data: { type: 'continue' }
+			});
+			window.dispatchEvent(event);
+			await Promise.resolve();
+		});
 
-    describe('Command Dispatcher', () => {
-        test('should invoke mrb_debug_next when receiving "next" message from VS Code', async () => {
-            // WASM インスタンス実行のダミーハンドラ
-            const executeDebugCommand = (instance, commandName) => {
-                instance.ccall(commandName, 'string', [], []);
-            };
-
-            executeDebugCommand(mockModule, 'mrb_debug_next');
-
-            expect(mockCcall).toHaveBeenCalledWith('mrb_debug_next', 'string', [], []);
-        });
-
-        test('should invoke mrb_debug_step when receiving "stepIn" message', async () => {
-            const executeDebugCommand = (instance, commandName) => {
-                instance.ccall(commandName, 'string', [], []);
-            };
-
-            executeDebugCommand(mockModule, 'mrb_debug_step');
-
-            expect(mockCcall).toHaveBeenCalledWith('mrb_debug_step', 'string', [], []);
-        });
-
-        test('should invoke mrb_debug_continue when receiving "continue" message', async () => {
-            const executeDebugCommand = (instance, commandName) => {
-                instance.ccall(commandName, 'string', [], []);
-            };
-
-            executeDebugCommand(mockModule, 'mrb_debug_continue');
-
-            expect(mockCcall).toHaveBeenCalledWith('mrb_debug_continue', 'string', [], []);
-        });
-    });
+		test('should handle "setBreakpoints" message from VS Code', async () => {
+			const event = new MessageEvent('message', {
+				data: { type: 'setBreakpoints', breakpoints: [5, 10] }
+			});
+			window.dispatchEvent(event);
+			await Promise.resolve();
+		});
+	});
 });

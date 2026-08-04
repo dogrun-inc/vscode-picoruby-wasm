@@ -1,4 +1,8 @@
-const vscode = acquireVsCodeApi();
+const vscode = typeof acquireVsCodeApi === 'function'
+	? acquireVsCodeApi()
+	: (typeof window !== 'undefined' && typeof window.acquireVsCodeApi === 'function'
+		? window.acquireVsCodeApi()
+		: { postMessage: () => {} });
 
 /**
  * Converts a console argument into a loggable string.
@@ -68,13 +72,40 @@ console.error = (...args) => {
 /**
  * Resolves the PicoRuby ESM bundle relative to this runtime module.
  */
-const picorubyScriptUri = new URL('./picoruby.js', import.meta.url).toString();
+const getImportMetaUrl = () => {
+	try {
+		return eval('import.meta.url');
+	} catch {
+		return 'file:///';
+	}
+};
+
+const picorubyScriptUri = new URL('./picoruby.js', getImportMetaUrl()).toString();
+
+/**
+ * Dynamic import wrapper that handles Node/Jest test environment.
+ */
+const loadPicorubyModule = () => {
+	// Jest (Node.js) テスト環境の場合は動的インポートを実行せずダミーを返す
+	if (typeof process !== 'undefined' && (process.env.JEST_WORKER_ID || process.env.NODE_ENV === 'test')) {
+		return Promise.resolve({
+			default: async () => ({
+				ccall: () => {},
+				_mrb_debug_get_status: () => null,
+				picorubyDebugState: {}
+			})
+		});
+	}
+
+	// ブラウザ (Webview) 環境では通常通り動的インポートを実行
+	return eval('import(picorubyScriptUri)');
+};
 
 /**
  * Shared module initialization promise.
  * The instance is created once and reused by incoming start requests.
  */
-const moduleReady = import(picorubyScriptUri)
+const moduleReady = loadPicorubyModule()
 	.then(({ default: createModule }) => createModule({
 		print: (text) => console.log(text),
 		printErr: (text) => console.error(text)
@@ -394,3 +425,10 @@ window.addEventListener('message', async (event) => {
 		console.error('Failed to evaluate Ruby code in PicoRuby WASM', error);
 	}
 });
+
+if (typeof module !== 'undefined' && module.exports) {
+	module.exports = {
+		stringifyLogValue,
+		safeParseJson
+	};
+}

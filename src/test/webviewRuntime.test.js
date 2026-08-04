@@ -33,7 +33,7 @@ describe('webviewRuntime.js Test Suite', () => {
 
 
         // window.addEventListener のキャプチャ
-        const originalAddEventListener = window.addEventListener.bind(window);
+        const originalAddEventListener = EventTarget.prototype.addEventListener.bind(window);
         window.addEventListener = jest.fn((event, handler) => {
             if (event === 'message') {
                 messageListener = handler;

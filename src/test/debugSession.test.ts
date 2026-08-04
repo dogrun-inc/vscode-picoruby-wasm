@@ -102,4 +102,32 @@ suite('debug session adapter', () => {
 			assert.strictEqual(messages[1].success, true);
 		}
 	});
+
+	test('terminate followed by disconnect only emits terminated once', () => {
+		const adapter = createPicoRubyWasmInlineDebugAdapter();
+		const messages: DebugMessage[] = [];
+		const subscription = adapter.onDidSendMessage((message) => {
+			messages.push(message as DebugMessage);
+		});
+
+		adapter.handleMessage({
+			type: 'request',
+			seq: 1,
+			command: 'terminate'
+		});
+		adapter.handleMessage({
+			type: 'request',
+			seq: 2,
+			command: 'disconnect'
+		});
+
+	subscription.dispose();
+
+		const terminatedEvents = messages.filter((message) => message.type === 'event' && message.event === 'terminated');
+		assert.strictEqual(terminatedEvents.length, 1);
+		assert.deepStrictEqual(
+			messages.map((message) => message.type === 'event' ? message.event : message.command),
+			['terminated', 'terminate', 'disconnect']
+		);
+	});
 });

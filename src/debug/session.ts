@@ -672,6 +672,9 @@ class PicoRubyWasmMockSessionState {
 export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	private static readonly THREAD_ID = 1;
 
+	/** Tracks whether a terminated event has already been sent for this session. */
+	private terminatedEventSent = false;
+
 	/** Shared session state with a callback that forwards WebView logs to the Debug Console. */
 	private readonly state = new PicoRubyWasmMockSessionState((text) => {
 		this.sendEvent(new OutputEvent(formatWebviewLogOutput(text), 'console'));
@@ -681,7 +684,7 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 		this.sendEvent(event);
 	}, () => {
 		void this.state.reset();
-		this.sendEvent(new TerminatedEvent());
+		this.sendTerminatedEventOnce();
 	});
 
 	/**
@@ -847,7 +850,7 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 */
 	protected disconnectRequest(response: any): void {
 		void this.state.terminateRuntime();
-		this.sendEvent(new TerminatedEvent());
+		this.sendTerminatedEventOnce();
 		this.sendResponse(response);
 	}
 
@@ -858,8 +861,20 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 */
 	protected terminateRequest(response: any): void {
 		void this.state.terminateRuntime();
-		this.sendEvent(new TerminatedEvent());
+		this.sendTerminatedEventOnce();
 		this.sendResponse(response);
+	}
+
+	/**
+	 * Sends a terminated event once per session.
+	 */
+	private sendTerminatedEventOnce(): void {
+		if (this.terminatedEventSent) {
+			return;
+		}
+
+		this.terminatedEventSent = true;
+		this.sendEvent(new TerminatedEvent());
 	}
 }
 
@@ -869,6 +884,9 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
  */
 class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 	private static readonly THREAD_ID = 1;
+
+	/** Tracks whether a terminated event has already been sent for this adapter. */
+	private terminatedEventSent = false;
 
 	/** Event emitter used to send DAP messages back to VS Code. */
 	private readonly emitter = new vscode.EventEmitter<vscode.DebugProtocolMessage>();
@@ -897,7 +915,7 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 		});
 	}, () => {
 		void this.state.reset();
-		this.emit({ type: 'event', seq: this.nextMessageSeq(), event: 'terminated' });
+			this.emitTerminatedEventOnce();
 	});
 	/** Sequence counter for outgoing DAP messages. */
 	private nextSeq = 1;
@@ -1102,7 +1120,7 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				return;
 			case 'disconnect':
 				void this.state.terminateRuntime();
-				this.emit({ type: 'event', seq: this.nextMessageSeq(), event: 'terminated' });
+				this.emitTerminatedEventOnce();
 				this.emit({
 					type: 'response',
 					seq: this.nextMessageSeq(),
@@ -1113,7 +1131,7 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				return;
 			case 'terminate':
 				void this.state.terminateRuntime();
-				this.emit({ type: 'event', seq: this.nextMessageSeq(), event: 'terminated' });
+				this.emitTerminatedEventOnce();
 				this.emit({
 					type: 'response',
 					seq: this.nextMessageSeq(),
@@ -1141,6 +1159,18 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 	 */
 	private emit(message: any): void {
 		this.emitter.fire(message);
+	}
+
+	/**
+	 * Emits a terminated event once per adapter instance.
+	 */
+	private emitTerminatedEventOnce(): void {
+		if (this.terminatedEventSent) {
+			return;
+		}
+
+		this.terminatedEventSent = true;
+		this.emit({ type: 'event', seq: this.nextMessageSeq(), event: 'terminated' });
 	}
 
 	/**

@@ -1,4 +1,6 @@
-const vscode = acquireVsCodeApi();
+const vscode = typeof acquireVsCodeApi === 'function'
+	? acquireVsCodeApi()
+	: { postMessage: () => {} };
 
 /**
  * Converts a console argument into a loggable string.
@@ -17,6 +19,24 @@ const stringifyLogValue = (value) => {
 	} catch {
 		return String(value);
 	}
+};
+
+/**
+ * Safely parses JSON strings.
+ * 
+ * @param {string} text JSON string to parse.
+ * @returns {any|null} Parsed object or null if parsing fails.
+ */
+const safeParseJson = (text) => {
+    if (typeof text !== 'string') {
+        return null;
+    }
+
+    try {
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
 };
 
 /**
@@ -48,15 +68,29 @@ console.error = (...args) => {
 };
 
 /**
- * Resolves the PicoRuby ESM bundle relative to this runtime module.
+ * Dynamic import wrapper that handles Node/Jest test environment.
  */
-const picorubyScriptUri = new URL('./picoruby.js', import.meta.url).toString();
+const loadPicorubyModule = () => {
+	// Jest (Node.js) テスト環境の場合は動的インポートを実行せずダミーを返す
+	if (typeof process !== 'undefined' && (process.env.JEST_WORKER_ID || process.env.NODE_ENV === 'test')) {
+		return Promise.resolve({
+			default: async () => ({
+				ccall: () => {},
+				_mrb_debug_get_status: () => null,
+				picorubyDebugState: {}
+			})
+		});
+	}
+
+	// ブラウザ (Webview) 環境では相対パスで picoruby.js を動的インポートする
+	return import('./picoruby.js');
+};
 
 /**
  * Shared module initialization promise.
  * The instance is created once and reused by incoming start requests.
  */
-const moduleReady = import(picorubyScriptUri)
+const moduleReady = loadPicorubyModule()
 	.then(({ default: createModule }) => createModule({
 		print: (text) => console.log(text),
 		printErr: (text) => console.error(text)
@@ -66,21 +100,12 @@ const moduleReady = import(picorubyScriptUri)
 			isPaused: true,
 			breakpoints: [],
 			debugPollInterval: null,
-			lastReportedPauseKey: null
+			pauseId: null,
+			terminatedNotified: false,
+			sessionStarted: false,
+			idleNoProgressTicks: 0
 		};
 		instance.picorubyDebugState = runtimeState;
-
-		const safeParseJson = (text) => {
-			if (typeof text !== 'string') {
-				return null;
-			}
-
-			try {
-				return JSON.parse(text);
-			} catch {
-				return null;
-			}
-		};
 
 		const injectBindingIrb = (sourceCode, breakpoints) => {
 			const normalizedBreakpoints = new Set(
@@ -110,9 +135,38 @@ const moduleReady = import(picorubyScriptUri)
 			return lines.join('\n');
 		};
 
+		const TERMINAL_MODES = new Set(['idle', 'terminated', 'finished', 'exited', 'completed', 'done']);
+
+		const notifyStoppedFromStatus = (status) => {
+			const currentPauseId = status.pause_id ?? `line:${status.line}`;
+			runtimeState.pauseId = currentPauseId;
+			runtimeState.isPaused = true;
+			runtimeState.idleNoProgressTicks = 0;
+
+			const line = Number.isInteger(status?.line) && status.line > 0 ? status.line : undefined;
+			vscode.postMessage({ type: 'stopped', reason: 'breakpoint', line });
+		};
+
+		const notifyTerminatedOnce = () => {
+			if (runtimeState.terminatedNotified) {
+				return;
+			}
+
+			runtimeState.terminatedNotified = true;
+			runtimeState.sessionStarted = false;
+			runtimeState.isPaused = true;
+			runtimeState.idleNoProgressTicks = 0;
+			vscode.postMessage({ type: 'terminated' });
+		};
+
+		const isTerminalStatus = (status) => {
+			const mode = typeof status?.mode === 'string' ? status.mode.toLowerCase() : '';
+			return TERMINAL_MODES.has(mode);
+		};
+
 		const pollDebugStatus = () => {
 			try {
-				if (runtimeState.debugPollInterval === null) {
+				if (runtimeState.debugPollInterval === null || !runtimeState.sessionStarted) {
 					return;
 				}
 
@@ -122,21 +176,25 @@ const moduleReady = import(picorubyScriptUri)
 
 				const jsonStatus = instance.ccall('mrb_debug_get_status', 'string', [], []);
 				const status = safeParseJson(jsonStatus);
-				if (!status || typeof status !== 'object' || status.mode !== 'paused') {
+                if (!status || typeof status !== 'object') {
 					return;
 				}
 
-				const line = Number.isInteger(status.line) && status.line > 0 ? status.line : undefined;
-				const pauseKey = Number.isInteger(status.pause_id)
-					? `pause:${status.pause_id}`
-					: `line:${line ?? 'unknown'}`;
-				if (pauseKey === runtimeState.lastReportedPauseKey) {
+				if (isTerminalStatus(status)) {
+					notifyTerminatedOnce();
 					return;
 				}
 
-				runtimeState.lastReportedPauseKey = pauseKey;
-				runtimeState.isPaused = true;
-				vscode.postMessage({ type: 'stopped', reason: 'breakpoint', line });
+				if (status.mode !== 'paused') {
+					return;
+				}
+
+				const currentPauseId = status.pause_id ?? `line:${status.line}`;
+				if (currentPauseId === runtimeState.pauseId) {
+                    return;
+                }
+
+				notifyStoppedFromStatus(status);
 			} catch (error) {
 				console.error('mrb_debug_get_status polling failed', error);
 			}
@@ -150,10 +208,6 @@ const moduleReady = import(picorubyScriptUri)
 			runtimeState.debugPollInterval = setInterval(pollDebugStatus, 200);
 		};
 
-		/**
-		 * Initializes PicoRuby and starts a cooperative scheduler loop.
-		 * The loop keeps running in idle mode and immediately processes queued tasks.
-		 */
 		instance.ccall('picorb_init', 'number', [], []);
 		instance.picorubyRun = function() {
 			const MRB_TICK_UNIT = 4;
@@ -176,6 +230,7 @@ const moduleReady = import(picorubyScriptUri)
 				if (runtimeState.isPaused) {
 					return;
 				}
+
 				const now = performance.now();
 				let tickCount = 0;
 
@@ -203,15 +258,46 @@ const moduleReady = import(picorubyScriptUri)
 					progressed = true;
 				}
 
+				// 進捗がない場合の完走・停止チェック
+				if (!progressed && gcSchedulerPending() !== 1 && runtimeState.sessionStarted) {
+					try {
+						if (typeof instance.ccall === 'function' && typeof instance._mrb_debug_get_status !== 'undefined') {
+							const jsonStatus = instance.ccall('mrb_debug_get_status', 'string', [], []);
+							const status = safeParseJson(jsonStatus);
+							
+							if (status && typeof status === 'object') {
+								if (status.mode === 'paused') {
+									const currentPauseId = status.pause_id ?? `line:${status.line}`;
+									if (currentPauseId !== runtimeState.pauseId) {
+									notifyStoppedFromStatus(status);
+									}
+									return;
+								}
+
+								if (isTerminalStatus(status)) {
+									notifyTerminatedOnce();
+									return;
+								}
+							}
+						}
+					} catch (error) {
+						console.error('run-loop status check failed', error);
+					}
+
+					runtimeState.idleNoProgressTicks += 1;
+					if (runtimeState.idleNoProgressTicks >= 10) {
+						notifyTerminatedOnce();
+						return;
+					}
+				} else if (progressed) {
+					runtimeState.idleNoProgressTicks = 0;
+				}
+
 				const delay = progressed || gcSchedulerPending() === 1 ? 0 : IDLE_DELAY;
 				setTimeout(run, delay);
 			}
 
 			instance.picorubyResume = () => {
-				if (!runtimeState.isPaused) {
-					return;
-				}
-
 				runtimeState.isPaused = false;
 				run();
 			};
@@ -235,6 +321,30 @@ const moduleReady = import(picorubyScriptUri)
  */
 window.addEventListener('message', async (event) => {
 	const data = event.data;
+
+	const executeDebugCommand = (instance, commandName, exportName) => {
+		console.log(`[debugger] received command ${commandName}`);
+		if (typeof instance.ccall !== 'function' || typeof instance[exportName] === 'undefined') {
+			return;
+		}
+
+		try {
+			instance.ccall(commandName, 'string', [], []);
+		} catch (error) {
+			console.log(`${commandName} raised`, error);
+		}
+
+		const runtimeState = instance.picorubyDebugState;
+		runtimeState.pauseId = null;
+		runtimeState.terminatedNotified = false;
+		runtimeState.idleNoProgressTicks = 0;
+		runtimeState.isPaused = false;
+
+		if (typeof instance.picorubyResume === 'function') {
+			instance.picorubyResume();
+		}
+	};
+
 	if (data?.type === 'setBreakpoints') {
 		const instance = await moduleReady;
 		instance.picorubyDebugState.breakpoints = Array.isArray(data.breakpoints)
@@ -245,18 +355,24 @@ window.addEventListener('message', async (event) => {
 
 	if (data?.type === 'continue') {
 		const instance = await moduleReady;
-		if (typeof instance.ccall === 'function' && typeof instance._mrb_debug_continue !== 'undefined') {
-			try {
-				instance.ccall('mrb_debug_continue', 'string', [], []);
-			} catch (error) {
-				console.error('mrb_debug_continue failed', error);
-			}
-		}
+		executeDebugCommand(instance, 'mrb_debug_continue', '_mrb_debug_continue');
+		return;
+	}
 
-		instance.picorubyDebugState.lastReportedPauseKey = null;
-		if (typeof instance.picorubyResume === 'function') {
-			instance.picorubyResume();
-		}
+	if (data?.type === 'next') {
+		const instance = await moduleReady;
+		executeDebugCommand(instance, 'mrb_debug_next', '_mrb_debug_next');
+		return;
+	}
+
+	if (data?.type === 'stepIn') {
+		const instance = await moduleReady;
+		executeDebugCommand(instance, 'mrb_debug_step', '_mrb_debug_step');
+		return;
+	}
+
+	if (data?.type === 'terminate') {
+		location.reload();
 		return;
 	}
 
@@ -264,23 +380,41 @@ window.addEventListener('message', async (event) => {
 		return;
 	}
 
+	console.log('[debugger] webview message type=start');
+
 	const instance = await moduleReady;
 	const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
 	const runtimeBreakpoints = Array.isArray(data.breakpoints)
 		? data.breakpoints.filter((line) => Number.isInteger(line) && line > 0)
 		: instance.picorubyDebugState.breakpoints;
+
+	instance.picorubyDebugState.pauseId = null;
+	instance.picorubyDebugState.terminatedNotified = false;
+	instance.picorubyDebugState.sessionStarted = false;
+	instance.picorubyDebugState.idleNoProgressTicks = 0;
 	instance.picorubyDebugState.breakpoints = runtimeBreakpoints;
+
 	const patchedCode = typeof instance.picorubyInjectBreakpoints === 'function'
 		? instance.picorubyInjectBreakpoints(receivedCode, runtimeBreakpoints)
 		: receivedCode;
+
 	console.log('Received start command from VS Code.');
 	console.log(patchedCode);
 	try {
 		instance.ccall('picorb_create_task', 'number', ['string'], [patchedCode]);
+		instance.picorubyDebugState.sessionStarted = true;
 		if (typeof instance.picorubyResume === 'function') {
 			instance.picorubyResume();
 		}
 	} catch (error) {
+		instance.picorubyDebugState.sessionStarted = false;
 		console.error('Failed to evaluate Ruby code in PicoRuby WASM', error);
 	}
 });
+
+if (typeof module !== 'undefined' && module.exports) {
+	module.exports = {
+		stringifyLogValue,
+		safeParseJson
+	};
+}

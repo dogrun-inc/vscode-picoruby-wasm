@@ -234,6 +234,8 @@ class PicoRubyWasmMockSessionState {
 	private readonly onWebviewLog: ((text: string) => void) | undefined;
 	/** Callback used to notify the adapter that runtime entered paused state. */
 	private readonly onRuntimeStopped: ((reason: 'entry' | 'breakpoint', line?: number) => void) | undefined;
+	/** Callback used to notify the adapter that runtime execution has terminated. */
+	private readonly onRuntimeTerminated: (() => void) | undefined;
 	/** Absolute path to the currently active program. */
 	private activeProgram = path.resolve(process.cwd(), 'index.html');
 	/** Current 1-based line used for stackTrace responses. */
@@ -254,10 +256,12 @@ class PicoRubyWasmMockSessionState {
 	 */
 	constructor(
 		onWebviewLog?: (text: string) => void,
-		onRuntimeStopped?: (reason: 'entry' | 'breakpoint', line?: number) => void
+		onRuntimeStopped?: (reason: 'entry' | 'breakpoint', line?: number) => void,
+		onRuntimeTerminated?: () => void
 	) {
 		this.onWebviewLog = onWebviewLog;
 		this.onRuntimeStopped = onRuntimeStopped;
+		this.onRuntimeTerminated = onRuntimeTerminated;
 	}
 
 	/**
@@ -320,11 +324,62 @@ class PicoRubyWasmMockSessionState {
 	 * Requests the WebView runtime to continue from a paused state.
 	 */
 	continueRuntime(): void {
-		if (!this.webviewPanel || !this.webviewReady) {
+		this.postControlMessage('continue');
+	}
+
+	/**
+	 * Requests the WebView runtime to execute one step-over operation.
+	 */
+	nextRuntime(): void {
+		this.postControlMessage('next');
+	}
+
+	/**
+	 * Requests the WebView runtime to execute one step-in operation.
+	 */
+	stepInRuntime(): void {
+		this.postControlMessage('stepIn');
+	}
+
+	/**
+	 * Sends a control command to the runtime webview and logs delivery outcome.
+	 *
+	 * @param type Control message type.
+	 */
+	private postControlMessage(type: 'continue' | 'next' | 'stepIn' | 'terminate'): void {
+		if (!this.webviewPanel) {
+			this.onWebviewLog?.(`[adapter] dropped '${type}' command: webview panel not available`);
 			return;
 		}
 
-		void this.webviewPanel.webview.postMessage({ type: 'continue' });
+		if (!this.webviewReady) {
+			this.onWebviewLog?.(`[adapter] dropped '${type}' command: webview not ready`);
+			return;
+		}
+
+		void this.webviewPanel.webview.postMessage({ type }).then((posted) => {
+			if (!posted) {
+				this.onWebviewLog?.(`[adapter] webview declined '${type}' command`);
+			}
+		}, (error: unknown) => {
+			const message = error instanceof Error ? error.message : String(error);
+			this.onWebviewLog?.(`[adapter] failed to post '${type}' command: ${message}`);
+		});
+	}
+
+	/**
+	 * Requests runtime termination and then resets adapter-side resources.
+	 */
+	async terminateRuntime(): Promise<void> {
+		if (this.webviewPanel && this.webviewReady) {
+			try {
+				await this.webviewPanel.webview.postMessage({ type: 'terminate' });
+			} catch {
+				// Ignore postMessage failures and continue with local cleanup.
+			}
+		}
+
+		await this.reset();
 	}
 
 	/**
@@ -438,6 +493,11 @@ class PicoRubyWasmMockSessionState {
 					this.currentLine = line;
 				}
 				this.onRuntimeStopped?.(reason, line);
+				return;
+			}
+
+			if (receivedMessage.type === 'terminated') {
+				this.onRuntimeTerminated?.();
 				return;
 			}
 
@@ -612,6 +672,9 @@ class PicoRubyWasmMockSessionState {
 export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	private static readonly THREAD_ID = 1;
 
+	/** Tracks whether a terminated event has already been sent for this session. */
+	private terminatedEventSent = false;
+
 	/** Shared session state with a callback that forwards WebView logs to the Debug Console. */
 	private readonly state = new PicoRubyWasmMockSessionState((text) => {
 		this.sendEvent(new OutputEvent(formatWebviewLogOutput(text), 'console'));
@@ -619,6 +682,9 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 		const event = new StoppedEvent(reason, PicoRubyWasmLoggingDebugSession.THREAD_ID);
 		Object.assign(event.body, { allThreadsStopped: true });
 		this.sendEvent(event);
+	}, () => {
+		void this.state.reset();
+		this.sendTerminatedEventOnce();
 	});
 
 	/**
@@ -664,6 +730,26 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	protected continueRequest(response: any, _args: any): void {
 		this.state.continueRuntime();
 		response.body = { allThreadsContinued: true };
+		this.sendResponse(response);
+	}
+
+	/**
+	 * Handles DAP next (step over) requests.
+	 *
+	 * @param response DAP response object.
+	 */
+	protected nextRequest(response: any): void {
+		this.state.nextRuntime();
+		this.sendResponse(response);
+	}
+
+	/**
+	 * Handles DAP stepIn requests.
+	 *
+	 * @param response DAP response object.
+	 */
+	protected stepInRequest(response: any): void {
+		this.state.stepInRuntime();
 		this.sendResponse(response);
 	}
 
@@ -763,9 +849,32 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 * @param response DAP response object.
 	 */
 	protected disconnectRequest(response: any): void {
-		void this.state.reset();
-		this.sendEvent(new TerminatedEvent());
+		void this.state.terminateRuntime();
+		this.sendTerminatedEventOnce();
 		this.sendResponse(response);
+	}
+
+	/**
+	 * Handles DAP terminate requests and terminates the session.
+	 *
+	 * @param response DAP response object.
+	 */
+	protected terminateRequest(response: any): void {
+		void this.state.terminateRuntime();
+		this.sendTerminatedEventOnce();
+		this.sendResponse(response);
+	}
+
+	/**
+	 * Sends a terminated event once per session.
+	 */
+	private sendTerminatedEventOnce(): void {
+		if (this.terminatedEventSent) {
+			return;
+		}
+
+		this.terminatedEventSent = true;
+		this.sendEvent(new TerminatedEvent());
 	}
 }
 
@@ -775,6 +884,9 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
  */
 class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 	private static readonly THREAD_ID = 1;
+
+	/** Tracks whether a terminated event has already been sent for this adapter. */
+	private terminatedEventSent = false;
 
 	/** Event emitter used to send DAP messages back to VS Code. */
 	private readonly emitter = new vscode.EventEmitter<vscode.DebugProtocolMessage>();
@@ -801,6 +913,9 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				allThreadsStopped: true
 			}
 		});
+	}, () => {
+		this.state.reset();
+		this.emitTerminatedEventOnce();
 	});
 	/** Sequence counter for outgoing DAP messages. */
 	private nextSeq = 1;
@@ -894,6 +1009,26 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 					body: { allThreadsContinued: true }
 				});
 				return;
+			case 'next':
+				this.state.nextRuntime();
+				this.emit({
+					type: 'response',
+					seq: this.nextMessageSeq(),
+					request_seq: message.seq,
+					success: true,
+					command: 'next'
+				});
+				return;
+			case 'stepIn':
+				this.state.stepInRuntime();
+				this.emit({
+					type: 'response',
+					seq: this.nextMessageSeq(),
+					request_seq: message.seq,
+					success: true,
+					command: 'stepIn'
+				});
+				return;
 			case 'setBreakpoints': {
 				const requested = Array.isArray(message.arguments?.breakpoints)
 					? message.arguments.breakpoints
@@ -984,14 +1119,25 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				});
 				return;
 			case 'disconnect':
-				void this.state.reset();
-				this.emit({ type: 'event', seq: this.nextMessageSeq(), event: 'terminated' });
+				void this.state.terminateRuntime();
+				this.emitTerminatedEventOnce();
 				this.emit({
 					type: 'response',
 					seq: this.nextMessageSeq(),
 					request_seq: message.seq,
 					success: true,
 					command: 'disconnect'
+				});
+				return;
+			case 'terminate':
+				void this.state.terminateRuntime();
+				this.emitTerminatedEventOnce();
+				this.emit({
+					type: 'response',
+					seq: this.nextMessageSeq(),
+					request_seq: message.seq,
+					success: true,
+					command: 'terminate'
 				});
 				return;
 			default:
@@ -1013,6 +1159,18 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 	 */
 	private emit(message: any): void {
 		this.emitter.fire(message);
+	}
+
+	/**
+	 * Emits a terminated event once per adapter instance.
+	 */
+	private emitTerminatedEventOnce(): void {
+		if (this.terminatedEventSent) {
+			return;
+		}
+
+		this.terminatedEventSent = true;
+		this.emit({ type: 'event', seq: this.nextMessageSeq(), event: 'terminated' });
 	}
 
 	/**

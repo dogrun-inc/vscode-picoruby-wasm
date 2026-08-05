@@ -68,19 +68,6 @@ console.error = (...args) => {
 };
 
 /**
- * Resolves the PicoRuby ESM bundle relative to this runtime module.
- */
-const getImportMetaUrl = () => {
-	try {
-		return eval('import.meta.url');
-	} catch {
-		return 'file:///';
-	}
-};
-
-const picorubyScriptUri = new URL('./picoruby.js', getImportMetaUrl()).toString();
-
-/**
  * Dynamic import wrapper that handles Node/Jest test environment.
  */
 const loadPicorubyModule = () => {

@@ -371,6 +371,12 @@ window.addEventListener('message', async (event) => {
 		return;
 	}
 
+	if (data?.type === 'pause') {
+		const instance = await moduleReady;
+		executeDebugCommand(instance, 'mrb_debug_step', '_mrb_debug_step');
+		return;
+	}
+
 	if (data?.type === 'terminate') {
 		location.reload();
 		return;

@@ -342,11 +342,18 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
+	 * Requests the WebView runtime to pause execution.
+	 */
+	pauseRuntime(): void {
+		this.postControlMessage('pause');
+	}
+
+	/**
 	 * Sends a control command to the runtime webview and logs delivery outcome.
 	 *
 	 * @param type Control message type.
 	 */
-	private postControlMessage(type: 'continue' | 'next' | 'stepIn' | 'terminate'): void {
+	private postControlMessage(type: 'continue' | 'next' | 'stepIn' | 'pause' | 'terminate'): void {
 		if (!this.webviewPanel) {
 			this.onWebviewLog?.(`[adapter] dropped '${type}' command: webview panel not available`);
 			return;
@@ -754,6 +761,16 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	}
 
 	/**
+	 * Handles DAP pause requests.
+	 *
+	 * @param response DAP response object.
+	 */
+	protected pauseRequest(response: any, _args: any): void {
+		this.state.pauseRuntime();
+		this.sendResponse(response);
+	}
+
+	/**
 	 * Handles DAP setBreakpoints requests.
 	 *
 	 * @param response DAP response object.
@@ -1027,6 +1044,16 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 					request_seq: message.seq,
 					success: true,
 					command: 'stepIn'
+				});
+				return;
+			case 'pause':
+				this.state.pauseRuntime();
+				this.emit({
+					type: 'response',
+					seq: this.nextMessageSeq(),
+					request_seq: message.seq,
+					success: true,
+					command: 'pause'
 				});
 				return;
 			case 'setBreakpoints': {

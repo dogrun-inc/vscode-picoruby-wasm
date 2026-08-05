@@ -125,5 +125,21 @@ describe('webviewRuntime.js Test Suite', () => {
 			window.dispatchEvent(event);
 			await Promise.resolve();
 		});
+
+		test('should execute mrb_debug_step when receiving "pause" message', async () => {
+			const event = new MessageEvent('message', {
+				data: { type: 'pause' }
+			});
+			window.dispatchEvent(event);
+			await Promise.resolve();
+			await Promise.resolve();
+
+			expect(mockPostMessage).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'log',
+					text: expect.stringContaining('[debugger] received command mrb_debug_step')
+				})
+			);
+		});
 	});
 });

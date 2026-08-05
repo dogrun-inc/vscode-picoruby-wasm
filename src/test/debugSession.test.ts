@@ -49,7 +49,7 @@ suite('debug session adapter', () => {
 		assert.strictEqual(messages[1].event, 'initialized');
 	});
 
-	test('continue, next, and stepIn requests return success responses', () => {
+	test('continue, next, stepIn, and pause requests return success responses', () => {
 		const continueMessages = collectMessages('continue');
 		assert.strictEqual(continueMessages.length, 2);
 		assert.strictEqual(continueMessages[0].type, 'event');
@@ -88,6 +88,19 @@ suite('debug session adapter', () => {
 		assert.strictEqual(stepInMessages[1].command, 'stepIn');
 		assert.strictEqual(stepInMessages[1].success, true);
 		assert.strictEqual(stepInMessages[1].body, undefined);
+
+		const pauseMessages = collectMessages('pause');
+		assert.strictEqual(pauseMessages.length, 2);
+		assert.strictEqual(pauseMessages[0].type, 'event');
+		assert.strictEqual(pauseMessages[0].event, 'output');
+		assert.ok(
+			typeof pauseMessages[0].body?.output === 'string' &&
+			pauseMessages[0].body.output.includes("dropped 'pause' command")
+		);
+		assert.strictEqual(pauseMessages[1].type, 'response');
+		assert.strictEqual(pauseMessages[1].command, 'pause');
+		assert.strictEqual(pauseMessages[1].success, true);
+		assert.strictEqual(pauseMessages[1].body, undefined);
 	});
 
 	test('terminate and disconnect emit a terminated event before responding', () => {

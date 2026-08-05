@@ -121,7 +121,7 @@ suite('debug session adapter', () => {
 			command: 'disconnect'
 		});
 
-	subscription.dispose();
+		subscription.dispose();
 
 		const terminatedEvents = messages.filter((message) => message.type === 'event' && message.event === 'terminated');
 		assert.strictEqual(terminatedEvents.length, 1);

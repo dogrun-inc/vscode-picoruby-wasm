@@ -914,8 +914,8 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 			}
 		});
 	}, () => {
-		void this.state.reset();
-			this.emitTerminatedEventOnce();
+		this.state.reset();
+		this.emitTerminatedEventOnce();
 	});
 	/** Sequence counter for outgoing DAP messages. */
 	private nextSeq = 1;

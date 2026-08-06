@@ -135,7 +135,7 @@ const moduleReady = loadPicorubyModule()
 			return lines.join('\n');
 		};
 
-		const TERMINAL_MODES = new Set(['idle', 'terminated', 'finished', 'exited', 'completed', 'done']);
+		const TERMINAL_MODES = new Set(['terminated', 'finished', 'exited', 'completed', 'done']);
 
 		const notifyStoppedFromStatus = (status) => {
 			const currentPauseId = status.pause_id ?? `line:${status.line}`;
@@ -218,9 +218,7 @@ const moduleReady = loadPicorubyModule()
 				const result = instance._mrb_run_step();
 				return result < 0 ? -1 : 1;
 			};
-			const gcSchedulerPending = instance._mrb_gc_scheduler_pending_wasm || function() {
-				return 0;
-			};
+
 			let lastTick = performance.now();
 
 			/**
@@ -249,7 +247,6 @@ const moduleReady = loadPicorubyModule()
 				while (performance.now() - sliceStart < BATCH_DURATION) {
 					const status = runStepStatus();
 					if (status < 0) {
-						console.error('mrb_run_step_status returned', status, '- scheduler continues');
 						break;
 					}
 					if (status === 0) {
@@ -259,13 +256,14 @@ const moduleReady = loadPicorubyModule()
 				}
 
 				// 進捗がない場合の完走・停止チェック
-				if (!progressed && gcSchedulerPending() !== 1 && runtimeState.sessionStarted) {
+				if (!progressed && runtimeState.sessionStarted) {
 					try {
 						if (typeof instance.ccall === 'function' && typeof instance._mrb_debug_get_status !== 'undefined') {
 							const jsonStatus = instance.ccall('mrb_debug_get_status', 'string', [], []);
 							const status = safeParseJson(jsonStatus);
 							
 							if (status && typeof status === 'object') {
+								// ブレークポイント等で一時停止した場合
 								if (status.mode === 'paused') {
 									const currentPauseId = status.pause_id ?? `line:${status.line}`;
 									if (currentPauseId !== runtimeState.pauseId) {
@@ -274,6 +272,7 @@ const moduleReady = loadPicorubyModule()
 									return;
 								}
 
+								// 明確な終了ステータス（terminated 等）の判定
 								if (isTerminalStatus(status)) {
 									notifyTerminatedOnce();
 									return;
@@ -284,8 +283,9 @@ const moduleReady = loadPicorubyModule()
 						console.error('run-loop status check failed', error);
 					}
 
+					// スリープや待機時間を考慮し、進捗なしでのカウント上限を拡張（約3秒間の無応答で完走とみなす）
 					runtimeState.idleNoProgressTicks += 1;
-					if (runtimeState.idleNoProgressTicks >= 10) {
+					if (runtimeState.idleNoProgressTicks >= 750) {
 						notifyTerminatedOnce();
 						return;
 					}
@@ -293,7 +293,7 @@ const moduleReady = loadPicorubyModule()
 					runtimeState.idleNoProgressTicks = 0;
 				}
 
-				const delay = progressed || gcSchedulerPending() === 1 ? 0 : IDLE_DELAY;
+				const delay = progressed ? 0 : IDLE_DELAY;
 				setTimeout(run, delay);
 			}
 

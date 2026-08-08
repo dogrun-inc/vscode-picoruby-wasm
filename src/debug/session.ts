@@ -556,7 +556,7 @@ class PicoRubyWasmMockSessionState {
 	 */
 	public requestFromWebview<T>(type: string): Promise<T> {
 		return new Promise((resolve) => {
-			const requestId = Math.random().toString(36).substring(2);
+			const requestId = randomBytes(8).toString('hex');
 			this.pendingRequests.set(requestId, resolve);
 
 			setTimeout(() => {

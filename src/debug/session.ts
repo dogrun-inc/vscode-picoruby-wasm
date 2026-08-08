@@ -685,22 +685,32 @@ class PicoRubyWasmMockSessionState {
 	 */
 	async createVariables(variablesReference?: number): Promise<PicoRubyWasmVariable[]> {
 		let variablesData: Record<string, any> = {};
+		const isGlobal = variablesReference === 2;
 
 		if (variablesReference === 1) {
-			console.log('[session] Requesting getLocals from Webview...');
 			variablesData = await this.requestFromWebview<Record<string, any>>('getLocals');
-			console.log('[session] Received locals data:', JSON.stringify(variablesData));
 		} else if (variablesReference === 2) {
-			console.log('[session] Requesting getGlobals from Webview...');
 			variablesData = await this.requestFromWebview<Record<string, any>>('getGlobals');
-			console.log('[session] Received globals data:', JSON.stringify(variablesData));
 		}
 
-		return Object.entries(variablesData).map(([name, value]) => ({
-			name,
-			value: typeof value === 'string' ? value : JSON.stringify(value),
-			variablesReference: 0
-		}));
+		return Object.entries(variablesData)
+			.filter(([name]) => {
+				if (!isGlobal) {
+					return !name.startsWith('__');
+				} else {
+					return (
+						!name.startsWith('$__') &&
+						!name.startsWith('$_') &&
+						!name.startsWith('$promise_') &&
+						name !== '$LOADED_FEATURES'
+					);
+				}
+			})
+			.map(([name, value]) => ({
+				name,
+				value: typeof value === 'string' ? value : JSON.stringify(value),
+				variablesReference: 0
+			}));
 	}
 
 	/**

@@ -264,7 +264,7 @@ class PicoRubyWasmMockSessionState {
 	private pendingStartCode: string | undefined;
 	/** 1-based breakpoint lines configured in VS Code. */
 	private configuredBreakpoints: number[] = [];
-	/** Pending requests for webview mapped by their sequence ID. */
+	/** Pending requests for webview mapped by their request ID. */
 	private pendingRequests = new Map<string, (data: any) => void>();
 
 	/**

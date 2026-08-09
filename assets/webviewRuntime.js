@@ -383,6 +383,42 @@ window.addEventListener('message', async (event) => {
 		return;
 	}
 
+	if (data?.type === 'getLocals') {
+		const instance = await moduleReady;
+		let localsJson = '{}';
+		try {
+			if (typeof instance.ccall === 'function' && typeof instance._mrb_debug_get_locals !== 'undefined') {
+				localsJson = instance.ccall('mrb_debug_get_locals', 'string', [], []);
+			}
+		} catch (e) {
+			console.error('mrb_debug_get_locals failed', e);
+		}
+		vscode.postMessage({
+			type: 'getLocalsResponse',
+			requestId: data.requestId,
+			data: safeParseJson(localsJson) || {}
+		});
+		return;
+	}
+
+	if (data?.type === 'getGlobals') {
+		const instance = await moduleReady;
+		let globalsJson = '{}';
+		try {
+			if (typeof instance.ccall === 'function' && typeof instance._mrb_get_globals_json !== 'undefined') {
+				globalsJson = instance.ccall('mrb_get_globals_json', 'string', [], []);
+			}
+		} catch (e) {
+			console.error('mrb_get_globals_json failed', e);
+		}
+		vscode.postMessage({
+			type: 'getGlobalsResponse',
+			requestId: data.requestId,
+			data: safeParseJson(globalsJson) || {}
+		});
+		return;
+	}
+
 	if (data?.type !== 'start') {
 		return;
 	}

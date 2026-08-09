@@ -12,6 +12,11 @@ global.acquireVsCodeApi = jest.fn().mockReturnValue({
 const webviewRuntime = require('../../assets/webviewRuntime');
 
 describe('webviewRuntime.js Test Suite', () => {
+	const flushAsyncEvents = async () => {
+		await Promise.resolve();
+		await Promise.resolve();
+	};
+
 	beforeEach(() => {
 		jest.useFakeTimers();
 		jest.clearAllMocks();
@@ -124,6 +129,42 @@ describe('webviewRuntime.js Test Suite', () => {
 			});
 			window.dispatchEvent(event);
 			await Promise.resolve();
+		});
+
+		test('should respond to getLocals with echoed requestId and object payload fallback', async () => {
+			const event = new MessageEvent('message', {
+				data: { type: 'getLocals', requestId: 'req-locals-1' }
+			});
+			window.dispatchEvent(event);
+			await flushAsyncEvents();
+
+			const response = mockPostMessage.mock.calls
+				.map((args) => args[0])
+				.find((message) => message?.type === 'getLocalsResponse');
+
+			expect(response).toEqual({
+				type: 'getLocalsResponse',
+				requestId: 'req-locals-1',
+				data: {}
+			});
+		});
+
+		test('should respond to getGlobals with echoed requestId and object payload fallback', async () => {
+			const event = new MessageEvent('message', {
+				data: { type: 'getGlobals', requestId: 'req-globals-1' }
+			});
+			window.dispatchEvent(event);
+			await flushAsyncEvents();
+
+			const response = mockPostMessage.mock.calls
+				.map((args) => args[0])
+				.find((message) => message?.type === 'getGlobalsResponse');
+
+			expect(response).toEqual({
+				type: 'getGlobalsResponse',
+				requestId: 'req-globals-1',
+				data: {}
+			});
 		});
 	});
 });

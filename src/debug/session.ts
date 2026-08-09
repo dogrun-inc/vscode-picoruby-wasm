@@ -111,6 +111,20 @@ interface PicoRubyWasmVariable {
 }
 
 /**
+ * Interface of Webview messages sent to the extension.
+ */
+interface PicoRubyWasmIncomingMessage {
+	/** Message type. */
+	type?: string;
+	/** Request identifier. */
+	requestId?: string;
+	data?: unknown;
+	text?: unknown;
+	reason?: unknown;
+	line?: unknown;
+}
+
+/**
  * Returns the extension root URI.
  * This is required to resolve WebView resources when a debug session starts.
  *
@@ -250,6 +264,8 @@ class PicoRubyWasmMockSessionState {
 	private pendingStartCode: string | undefined;
 	/** 1-based breakpoint lines configured in VS Code. */
 	private configuredBreakpoints: number[] = [];
+	/** Pending requests for webview mapped by their request ID. */
+	private pendingRequests = new Map<string, (data: any) => void>();
 
 	/**
 	 * @param onWebviewLog Callback that notifies the caller of log strings received from the WebView.
@@ -316,6 +332,7 @@ class PicoRubyWasmMockSessionState {
 	reset(): Promise<void> {
 		this.pendingStartCode = undefined;
 		this.activeProgramLines = [];
+		this.pendingRequests.clear();
 		this.disposeWebviewPanel();
 		return this.runtimeClient.stop();
 	}
@@ -472,7 +489,13 @@ class PicoRubyWasmMockSessionState {
 				return;
 			}
 
-			const receivedMessage = message as { type?: unknown; text?: unknown; reason?: unknown; line?: unknown };
+			const receivedMessage = message as PicoRubyWasmIncomingMessage;
+
+			if (receivedMessage.requestId) {
+				this.handleWebviewResponse(receivedMessage);
+				return;
+			}
+
 			if (receivedMessage.type === 'ready') {
 				this.webviewReady = true;
 				this.postBreakpointsIfReady();
@@ -509,7 +532,41 @@ class PicoRubyWasmMockSessionState {
 		});
 		this.webviewPanel.onDidDispose(() => {
 			this.webviewPanel = undefined;
-				this.webviewReady = false;
+			this.webviewReady = false;
+		});
+	}
+
+	/**
+	 * Handles messages received from the WebView and resolves pending requests.
+	 *
+	 * @param message Incoming message from the WebView.
+	 */
+	private handleWebviewResponse(message: PicoRubyWasmIncomingMessage): void {
+		if (message?.requestId && this.pendingRequests.has(message.requestId)) {
+			const resolve = this.pendingRequests.get(message.requestId);
+			this.pendingRequests.delete(message.requestId);
+			if (resolve) {
+				resolve(message.data);
+			}
+		}
+	}
+
+	/**
+	 * Sends a message to Webview and returns a promise for the response.
+	 */
+	public requestFromWebview<T>(type: string): Promise<T> {
+		return new Promise((resolve) => {
+			const requestId = randomBytes(8).toString('hex');
+			this.pendingRequests.set(requestId, resolve);
+
+			setTimeout(() => {
+				if (this.pendingRequests.has(requestId)) {
+					this.pendingRequests.delete(requestId);
+					resolve({} as T);
+				}
+			}, 1000);
+
+			this.postMessageToWebview({ type, requestId });
 		});
 	}
 
@@ -611,19 +668,49 @@ class PicoRubyWasmMockSessionState {
 	/**
 	 * Builds scopes for the scopes response.
 	 *
-	 * @returns Local scope metadata.
+	 * @returns Local and global scope metadata.
 	 */
 	createScopes(): PicoRubyWasmScope[] {
-		return [{ name: 'Locals', variablesReference: 1, expensive: false }];
+		return [
+			{ name: 'Locals', variablesReference: 1, expensive: false },
+			{ name: 'Globals', variablesReference: 2, expensive: true }
+		];
 	}
 
 	/**
-	 * Builds variables for the variables response.
+	 * Builds variables for the variables response by fetching data from the webview runtime.
 	 *
-	 * @returns Currently an empty list.
+	 * @param variablesReference 1 for Locals, 2 for Globals.
+	 * @returns Array of DAP variable entries.
 	 */
-	createVariables(): PicoRubyWasmVariable[] {
-		return [];
+	async createVariables(variablesReference?: number): Promise<PicoRubyWasmVariable[]> {
+		let variablesData: Record<string, any> = {};
+		const isGlobal = variablesReference === 2;
+
+		if (variablesReference === 1) {
+			variablesData = await this.requestFromWebview<Record<string, any>>('getLocals');
+		} else if (variablesReference === 2) {
+			variablesData = await this.requestFromWebview<Record<string, any>>('getGlobals');
+		}
+
+		return Object.entries(variablesData)
+			.filter(([name]) => {
+				if (!isGlobal) {
+					return !name.startsWith('__');
+				} else {
+					return (
+						!name.startsWith('$__') &&
+						!name.startsWith('$_') &&
+						!name.startsWith('$promise_') &&
+						name !== '$LOADED_FEATURES'
+					);
+				}
+			})
+			.map(([name, value]) => ({
+				name,
+				value: typeof value === 'string' ? value : JSON.stringify(value),
+				variablesReference: 0
+			}));
 	}
 
 	/**
@@ -663,6 +750,17 @@ class PicoRubyWasmMockSessionState {
 
 		return path.resolve(root, program);
 	}
+
+	/**
+	 * Sends a message to the active Webview.
+	 *
+	 * @param message Message payload to send to the Webview.
+	 */
+	public postMessageToWebview(message: any): void {
+		if (this.webviewPanel) {
+			void this.webviewPanel.webview.postMessage(message);
+		}
+	}
 }
 
 /**
@@ -676,16 +774,20 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	private terminatedEventSent = false;
 
 	/** Shared session state with a callback that forwards WebView logs to the Debug Console. */
-	private readonly state = new PicoRubyWasmMockSessionState((text) => {
-		this.sendEvent(new OutputEvent(formatWebviewLogOutput(text), 'console'));
-	}, (reason) => {
-		const event = new StoppedEvent(reason, PicoRubyWasmLoggingDebugSession.THREAD_ID);
-		Object.assign(event.body, { allThreadsStopped: true });
-		this.sendEvent(event);
-	}, () => {
-		void this.state.reset();
-		this.sendTerminatedEventOnce();
-	});
+	private readonly state = new PicoRubyWasmMockSessionState(
+		(text) => {
+			this.sendEvent(new OutputEvent(formatWebviewLogOutput(text), 'console'));
+		},
+		(reason) => {
+			const event = new StoppedEvent(reason, PicoRubyWasmLoggingDebugSession.THREAD_ID);
+			Object.assign(event.body, { allThreadsStopped: true });
+			this.sendEvent(event);
+		},
+		() => {
+			void this.state.reset();
+			this.sendTerminatedEventOnce();
+		}
+	);
 
 	/**
 	 * Handles DAP initialize requests.
@@ -828,9 +930,12 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 *
 	 * @param response DAP response object.
 	 */
-	protected variablesRequest(response: any): void {
-		response.body = { variables: this.state.createVariables() };
-		this.sendResponse(response);
+	protected variablesRequest(response: any, args: any): void {
+		const ref = args?.variablesReference;
+		void this.state.createVariables(ref).then((variables) => {
+			response.body = { variables };
+			this.sendResponse(response);
+		});
 	}
 
 	/**
@@ -890,6 +995,7 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 
 	/** Event emitter used to send DAP messages back to VS Code. */
 	private readonly emitter = new vscode.EventEmitter<vscode.DebugProtocolMessage>();
+
 	/** Shared session state that forwards WebView logs as output events. */
 	private readonly state = new PicoRubyWasmMockSessionState((text) => {
 		this.emit({
@@ -917,6 +1023,7 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 		this.state.reset();
 		this.emitTerminatedEventOnce();
 	});
+
 	/** Sequence counter for outgoing DAP messages. */
 	private nextSeq = 1;
 
@@ -1098,16 +1205,20 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 					body: { scopes: this.state.createScopes() }
 				});
 				return;
-			case 'variables':
+			case 'variables': {
+				const ref = message.arguments?.variablesReference;
+				const variables = await this.state.createVariables(ref);
+
 				this.emit({
 					type: 'response',
 					seq: this.nextMessageSeq(),
 					request_seq: message.seq,
 					success: true,
 					command: 'variables',
-					body: { variables: this.state.createVariables() }
+					body: { variables }
 				});
 				return;
+			}
 			case 'evaluate':
 				this.emit({
 					type: 'response',

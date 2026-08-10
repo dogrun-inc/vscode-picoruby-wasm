@@ -554,7 +554,7 @@ class PicoRubyWasmMockSessionState {
 	/**
 	 * Sends a message to Webview and returns a promise for the response.
 	 */
-	public requestFromWebview<T>(type: string): Promise<T> {
+	public requestFromWebview<T>(type: string, payload?: Record<string, unknown>): Promise<T> {
 		return new Promise((resolve) => {
 			const requestId = randomBytes(8).toString('hex');
 			this.pendingRequests.set(requestId, resolve);
@@ -566,7 +566,7 @@ class PicoRubyWasmMockSessionState {
 				}
 			}, 1000);
 
-			this.postMessageToWebview({ type, requestId });
+			this.postMessageToWebview({ type, requestId, ...(payload ?? {}) });
 		});
 	}
 
@@ -714,15 +714,58 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
-	 * Returns a mock result for evaluate responses.
+	 * Evaluates an expression in the current debug context via WebView runtime.
 	 *
-	 * @returns Fixed evaluation payload.
+	 * @param expression Variable name or expression to evaluate.
+	 * @returns DAP-compatible evaluation payload.
 	 */
-	createEvaluationResult(): { result: string; variablesReference: number } {
-		return {
-			result: 'mock-evaluation',
-			variablesReference: 0
-		};
+	async evaluateExpression(expression: string): Promise<{ result: string; variablesReference: number }> {
+		const fallback = { result: '', variablesReference: 0 };
+		const query = typeof expression === 'string' ? expression : '';
+
+		if (!query.trim()) {
+			return fallback;
+		}
+
+		try {
+			const response = await this.requestFromWebview<{ result?: unknown }>('evaluate', {
+				expression: query
+			});
+			const result = this.stringifyEvaluationResult(response?.result);
+			return {
+				result,
+				variablesReference: 0
+			};
+		} catch {
+			return fallback;
+		}
+	}
+
+	/**
+	 * Converts evaluation payload values into DAP string output.
+	 *
+	 * @param value Value returned from the WebView runtime.
+	 * @returns Display-safe string value.
+	 */
+	private stringifyEvaluationResult(value: unknown): string {
+		if (typeof value === 'string') {
+			return value;
+		}
+
+		if (value === null || value === undefined) {
+			return '';
+		}
+
+		if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+			return String(value);
+		}
+
+		try {
+			const json = JSON.stringify(value);
+			return typeof json === 'string' ? json : '';
+		} catch {
+			return '';
+		}
 	}
 
 	/**
@@ -943,9 +986,18 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 *
 	 * @param response DAP response object.
 	 */
-	protected evaluateRequest(response: any): void {
-		response.body = this.state.createEvaluationResult();
-		this.sendResponse(response);
+	protected evaluateRequest(response: any, args: any): void {
+		const expression = typeof args?.expression === 'string' ? args.expression : '';
+		void this.state
+			.evaluateExpression(expression)
+			.then((evaluationResult) => {
+				response.body = evaluationResult;
+				this.sendResponse(response);
+			})
+			.catch(() => {
+				response.body = { result: '', variablesReference: 0 };
+				this.sendResponse(response);
+			});
 	}
 
 	/**
@@ -1220,15 +1272,23 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				return;
 			}
 			case 'evaluate':
-				this.emit({
-					type: 'response',
-					seq: this.nextMessageSeq(),
-					request_seq: message.seq,
-					success: true,
-					command: 'evaluate',
-					body: this.state.createEvaluationResult()
-				});
-				return;
+				{
+					const expression =
+						typeof message.arguments?.expression === 'string'
+							? message.arguments.expression
+							: '';
+					const evaluationResult = await this.state.evaluateExpression(expression);
+
+					this.emit({
+						type: 'response',
+						seq: this.nextMessageSeq(),
+						request_seq: message.seq,
+						success: true,
+						command: 'evaluate',
+						body: evaluationResult
+					});
+					return;
+				}
 			case 'disconnect':
 				void this.state.terminateRuntime();
 				this.emitTerminatedEventOnce();

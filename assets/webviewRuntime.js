@@ -42,6 +42,33 @@ const safeParseJson = (text) => {
 };
 
 /**
+ * Converts runtime variable values into display-safe strings.
+ *
+ * @param {unknown} value Runtime value.
+ * @returns {string} String representation for evaluate responses.
+ */
+const toEvaluationResultString = (value) => {
+	if (typeof value === 'string') {
+		return value;
+	}
+
+	if (value === null || value === undefined) {
+		return '';
+	}
+
+	if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+		return String(value);
+	}
+
+	try {
+		const json = JSON.stringify(value);
+		return typeof json === 'string' ? json : '';
+	} catch {
+		return '';
+	}
+};
+
+/**
  * Forwards a single log line to the extension host.
  *
  * @param {string} text Log text.
@@ -415,6 +442,81 @@ window.addEventListener('message', async (event) => {
 			type: 'getGlobalsResponse',
 			requestId: data.requestId,
 			data: safeParseJson(globalsJson) || {}
+		});
+		return;
+	}
+
+	if (data?.type === 'evaluate') {
+		const instance = await moduleReady;
+		const expression = typeof data.expression === 'string' ? data.expression.trim() : '';
+		let result = '';
+
+		if (expression.length > 0) {
+			let localsData = {};
+			let globalsData = {};
+
+			try {
+				if (typeof instance.ccall === 'function' && typeof instance._mrb_debug_get_locals !== 'undefined') {
+					const localsJson = instance.ccall('mrb_debug_get_locals', 'string', [], []);
+					localsData = safeParseJson(localsJson) || {};
+				}
+			} catch (error) {
+				console.error('mrb_debug_get_locals failed during evaluate', error);
+			}
+
+			try {
+				if (typeof instance.ccall === 'function' && typeof instance._mrb_get_globals_json !== 'undefined') {
+					const globalsJson = instance.ccall('mrb_get_globals_json', 'string', [], []);
+					globalsData = safeParseJson(globalsJson) || {};
+				}
+			} catch (error) {
+				console.error('mrb_get_globals_json failed during evaluate', error);
+			}
+
+			if (
+				typeof localsData === 'object' &&
+				localsData !== null &&
+				Object.prototype.hasOwnProperty.call(localsData, expression)
+			) {
+				result = toEvaluationResultString(localsData[expression]);
+			} else if (
+				typeof globalsData === 'object' &&
+				globalsData !== null &&
+				Object.prototype.hasOwnProperty.call(globalsData, expression)
+			) {
+				result = toEvaluationResultString(globalsData[expression]);
+			} else if (
+				typeof globalsData === 'object' &&
+				globalsData !== null &&
+				Object.prototype.hasOwnProperty.call(globalsData, `$${expression}`)
+			) {
+				result = toEvaluationResultString(globalsData[`$${expression}`]);
+			} else if (typeof instance.ccall === 'function') {
+				const nativeEvaluateCandidates = [
+					{ command: 'mrb_debug_eval', exportName: '_mrb_debug_eval' },
+					{ command: 'mrb_debug_evaluate', exportName: '_mrb_debug_evaluate' }
+				];
+
+				for (const candidate of nativeEvaluateCandidates) {
+					if (typeof instance[candidate.exportName] === 'undefined') {
+						continue;
+					}
+
+					try {
+						const nativeResult = instance.ccall(candidate.command, 'string', ['string'], [expression]);
+						result = toEvaluationResultString(nativeResult);
+						break;
+					} catch (error) {
+						console.error(`${candidate.command} failed during evaluate`, error);
+					}
+				}
+			}
+		}
+
+		vscode.postMessage({
+			type: 'evaluateResponse',
+			requestId: data.requestId,
+			data: { result }
 		});
 		return;
 	}

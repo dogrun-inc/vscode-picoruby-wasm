@@ -721,7 +721,7 @@ class PicoRubyWasmMockSessionState {
 	 */
 	async evaluateExpression(expression: string): Promise<{ result: string; variablesReference: number }> {
 		const fallback = { result: '', variablesReference: 0 };
-		const query = typeof expression === 'string' ? expression : '';
+		const query = expression;
 
 		if (!query.trim()) {
 			return fallback;

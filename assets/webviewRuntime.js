@@ -454,6 +454,7 @@ window.addEventListener('message', async (event) => {
 		if (expression.length > 0) {
 			let localsData = {};
 			let globalsData = {};
+			let foundInLocals = false;
 
 			try {
 				if (typeof instance.ccall === 'function' && typeof instance._mrb_debug_get_locals !== 'undefined') {
@@ -464,34 +465,41 @@ window.addEventListener('message', async (event) => {
 				console.error('mrb_debug_get_locals failed during evaluate', error);
 			}
 
-			try {
-				if (typeof instance.ccall === 'function' && typeof instance._mrb_get_globals_json !== 'undefined') {
-					const globalsJson = instance.ccall('mrb_get_globals_json', 'string', [], []);
-					globalsData = safeParseJson(globalsJson) || {};
-				}
-			} catch (error) {
-				console.error('mrb_get_globals_json failed during evaluate', error);
-			}
-
 			if (
 				typeof localsData === 'object' &&
 				localsData !== null &&
 				Object.prototype.hasOwnProperty.call(localsData, expression)
 			) {
 				result = toEvaluationResultString(localsData[expression]);
-			} else if (
+				foundInLocals = true;
+			}
+
+			if (!foundInLocals) {
+				try {
+					if (typeof instance.ccall === 'function' && typeof instance._mrb_get_globals_json !== 'undefined') {
+						const globalsJson = instance.ccall('mrb_get_globals_json', 'string', [], []);
+						globalsData = safeParseJson(globalsJson) || {};
+					}
+				} catch (error) {
+					console.error('mrb_get_globals_json failed during evaluate', error);
+				}
+			}
+
+			if (
+				!foundInLocals &&
 				typeof globalsData === 'object' &&
 				globalsData !== null &&
 				Object.prototype.hasOwnProperty.call(globalsData, expression)
 			) {
 				result = toEvaluationResultString(globalsData[expression]);
 			} else if (
+				!foundInLocals &&
 				typeof globalsData === 'object' &&
 				globalsData !== null &&
 				Object.prototype.hasOwnProperty.call(globalsData, `$${expression}`)
 			) {
 				result = toEvaluationResultString(globalsData[`$${expression}`]);
-			} else if (typeof instance.ccall === 'function') {
+			} else if (!foundInLocals && typeof instance.ccall === 'function') {
 				const nativeEvaluateCandidates = [
 					{ command: 'mrb_debug_eval', exportName: '_mrb_debug_eval' },
 					{ command: 'mrb_debug_evaluate', exportName: '_mrb_debug_evaluate' }

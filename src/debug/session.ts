@@ -566,7 +566,7 @@ class PicoRubyWasmMockSessionState {
 				}
 			}, 1000);
 
-			this.postMessageToWebview({ type, requestId, ...(payload ?? {}) });
+			this.postMessageToWebview({ ...(payload ?? {}), type, requestId });
 		});
 	}
 

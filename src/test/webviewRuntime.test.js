@@ -166,5 +166,23 @@ describe('webviewRuntime.js Test Suite', () => {
 				data: {}
 			});
 		});
+
+		test('should respond to evaluate with echoed requestId and safe fallback result', async () => {
+			const event = new MessageEvent('message', {
+				data: { type: 'evaluate', requestId: 'req-evaluate-1', expression: 'a' }
+			});
+			window.dispatchEvent(event);
+			await flushAsyncEvents();
+
+			const response = mockPostMessage.mock.calls
+				.map((args) => args[0])
+				.find((message) => message?.type === 'evaluateResponse');
+
+			expect(response).toEqual({
+				type: 'evaluateResponse',
+				requestId: 'req-evaluate-1',
+				data: { result: '' }
+			});
+		});
 	});
 });

@@ -266,6 +266,8 @@ class PicoRubyWasmMockSessionState {
 	private configuredBreakpoints: number[] = [];
 	/** Pending requests for webview mapped by their request ID. */
 	private pendingRequests = new Map<string, (data: any) => void>();
+	/** 1-based line number where the script started. Used to adjust stack frames. */
+	private scriptStartLine = 1;
 
 	/**
 	 * @param onWebviewLog Callback that notifies the caller of log strings received from the WebView.
@@ -405,8 +407,10 @@ class PicoRubyWasmMockSessionState {
 	 * @param lines 1-based line numbers.
 	 */
 	updateBreakpoints(lines: number[]): void {
+		const offsetLines = lines.map(line => line - (this.scriptStartLine - 1));
+
 		this.configuredBreakpoints = Array.from(
-			new Set(lines.filter((line) => Number.isInteger(line) && line > 0))
+			new Set(offsetLines.filter((line) => Number.isInteger(line) && line > 0))
 		).sort((left, right) => left - right);
 		this.postBreakpointsIfReady();
 	}
@@ -508,11 +512,14 @@ class PicoRubyWasmMockSessionState {
 					receivedMessage.reason === 'breakpoint' || receivedMessage.reason === 'entry'
 						? receivedMessage.reason
 						: 'breakpoint';
-				const line =
+				let line =
 					typeof receivedMessage.line === 'number' && Number.isInteger(receivedMessage.line) && receivedMessage.line > 0
 						? receivedMessage.line
 						: undefined;
+						
+				// Adjust the line number to html file line number.
 				if (line !== undefined) {
+					line = line + (this.scriptStartLine - 1);
 					this.currentLine = line;
 				}
 				this.onRuntimeStopped?.(reason, line);
@@ -603,13 +610,47 @@ class PicoRubyWasmMockSessionState {
 
 	/**
 	 * Reads the target program source from disk and returns UTF-8 text.
+	 * If it's an HTML file, extracts the content of <script type="text/ruby">.
 	 *
 	 * @param programPath Resolved program file path.
 	 * @returns Source text. Empty string is returned when the file cannot be read.
 	 */
 	private async readProgramSource(programPath: string): Promise<string> {
 		try {
-			return await readFile(programPath, 'utf8');
+			const content = await readFile(programPath, 'utf8');
+			
+			if (programPath.toLowerCase().endsWith('.html') || programPath.toLowerCase().endsWith('.htm')) {
+				const lines = content.split('\n');
+				const scriptStartRegex = /<script\s+type=["'](?:text\/ruby|text\/picoruby)["'][^>]*>/i;
+				const scriptEndRegex = /<\/script>/i;
+
+				let insideScript = false;
+				let extractedLines: string[] = [];
+				this.scriptStartLine = 1;
+
+				for (let i = 0; i < lines.length; i++) {
+					if (!insideScript) {
+						if (scriptStartRegex.test(lines[i])) {
+							insideScript = true;
+							this.scriptStartLine = i + 2; // 0-based index + 1 (next line) + 1 (1-based line number)
+						}
+					} else {
+						if (scriptEndRegex.test(lines[i])) {
+							break;
+						}
+						extractedLines.push(lines[i]);
+					}
+				}
+
+				if (extractedLines.length === 0) {
+					this.onWebviewLog?.(`No PicoRuby script found in ${programPath}`);
+					return '';
+				}
+				return extractedLines.join('\n');
+			}
+
+			this.scriptStartLine = 1; // if it's .rb files and so on, it is always 1.
+			return content;
 		} catch (error: unknown) {
 			const message = error instanceof Error ? error.message : String(error);
 			this.onWebviewLog?.(`Failed to read program source: ${programPath} (${message})`);

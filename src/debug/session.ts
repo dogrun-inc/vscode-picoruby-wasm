@@ -466,6 +466,31 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
+	 * Injects binding.irb into the configured Ruby source lines.
+	 *
+	 * @param sourceCode Ruby source code.
+	 * @param breakpoints 1-based line numbers within the Ruby source.
+	 * @returns Ruby source code with debugger bindings injected.
+	 */
+	injectBindingIrb(sourceCode: string, breakpoints: number[]): string {
+		const lines = sourceCode.split('\n');
+		const normalizedBreakpoints = new Set(
+			breakpoints.filter((line) => Number.isInteger(line) && line > 0)
+		);
+
+		for (let index = 0; index < lines.length; index += 1) {
+			const lineNumber = index + 1;
+			if (!normalizedBreakpoints.has(lineNumber) || !this.isInjectableBreakpointLine(lineNumber, lines)) {
+				continue;
+			}
+
+			lines[index] = `binding.irb; ${lines[index]}`;
+		}
+
+		return lines.join('\n');
+	}
+
+	/**
 	 * Disposes the current WebView panel and clears its reference.
 	 */
 	private disposeWebviewPanel(): void {
@@ -585,7 +610,7 @@ class PicoRubyWasmMockSessionState {
 			return;
 		}
 
-		const code = this.pendingStartCode;
+		const code = this.injectBindingIrb(this.pendingStartCode, this.configuredBreakpoints);
 		this.pendingStartCode = undefined;
 		void this.webviewPanel.webview.postMessage({
 			type: 'start',

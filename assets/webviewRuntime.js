@@ -136,34 +136,6 @@ const moduleReady = loadPicorubyModule()
 		};
 		instance.picorubyDebugState = runtimeState;
 
-		const injectBindingIrb = (sourceCode, breakpoints) => {
-			const normalizedBreakpoints = new Set(
-				(Array.isArray(breakpoints) ? breakpoints : [])
-					.filter((line) => Number.isInteger(line) && line > 0)
-			);
-			const lines = sourceCode.split('\n');
-
-			for (let index = 0; index < lines.length; index += 1) {
-				const lineNumber = index + 1;
-				if (!normalizedBreakpoints.has(lineNumber)) {
-					continue;
-				}
-
-				const trimmed = lines[index].trimStart();
-				if (trimmed.length === 0 || trimmed.startsWith('#')) {
-					continue;
-				}
-
-				if (/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed)) {
-					continue;
-				}
-
-				lines[index] = `binding.irb; ${lines[index]}`;
-			}
-
-			return lines.join('\n');
-		};
-
 		const TERMINAL_MODES = new Set(['terminated', 'finished', 'exited', 'completed', 'done']);
 
 		const notifyStoppedFromStatus = (status) => {
@@ -342,7 +314,6 @@ const moduleReady = loadPicorubyModule()
 		startDebugPolling();
 		console.log('PicoRuby WASM in WebView Loaded!');
 		vscode.postMessage({ type: 'ready' });
-		instance.picorubyInjectBreakpoints = injectBindingIrb;
 		return instance;
 	})
 	.catch((error) => {
@@ -547,14 +518,10 @@ window.addEventListener('message', async (event) => {
 	instance.picorubyDebugState.lastProgressTime = performance.now();
 	instance.picorubyDebugState.breakpoints = runtimeBreakpoints;
 
-	const patchedCode = typeof instance.picorubyInjectBreakpoints === 'function'
-		? instance.picorubyInjectBreakpoints(receivedCode, runtimeBreakpoints)
-		: receivedCode;
-
 	console.log('Received start command from VS Code.');
-	console.log(patchedCode);
+	console.log(receivedCode);
 	try {
-		instance.ccall('picorb_create_task', 'number', ['string'], [patchedCode]);
+		instance.ccall('picorb_create_task', 'number', ['string'], [receivedCode]);
 		instance.picorubyDebugState.sessionStarted = true;
 		if (typeof instance.picorubyResume === 'function') {
 			instance.picorubyResume();

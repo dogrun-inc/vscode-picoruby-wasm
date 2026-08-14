@@ -506,6 +506,22 @@ window.addEventListener('message', async (event) => {
 
 	console.log('[debugger] webview message type=start');
 
+	if (data.html) {
+		try {
+			const parser = new DOMParser();
+			const doc = parser.parseFromString(data.html, 'text/html');
+			
+			// <script type="text/ruby"> タグをカットした body の中身を取得して描画
+			const rubyScripts = doc.querySelectorAll('script[type="text/ruby"], script[type="text/picoruby"]');
+			rubyScripts.forEach((script) => script.remove());
+
+			// Webview の body に HTML 要素を挿入
+			document.body.innerHTML = doc.body.innerHTML;
+		} catch (e) {
+			console.error('Failed to render HTML content', e);
+		}
+	}
+
 	const instance = await moduleReady;
 	const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
 	const runtimeBreakpoints = Array.isArray(data.breakpoints)

@@ -262,6 +262,8 @@ class PicoRubyWasmMockSessionState {
 	private webviewReady = false;
 	/** Ruby source code waiting to be sent to the WebView runtime. */
 	private pendingStartCode: string | undefined;
+    /** HTML content waiting to be sent to the WebView runtime for DOM rendering. */
+    private pendingStartHtml: string | undefined;
 	/** 1-based breakpoint lines configured in VS Code. */
 	private configuredBreakpoints: number[] = [];
 	/** Pending requests for webview mapped by their request ID. */
@@ -333,6 +335,7 @@ class PicoRubyWasmMockSessionState {
 	 */
 	reset(): Promise<void> {
 		this.pendingStartCode = undefined;
+		this.pendingStartHtml = undefined;
 		this.activeProgramLines = [];
 		this.pendingRequests.clear();
 		this.disposeWebviewPanel();
@@ -611,10 +614,14 @@ class PicoRubyWasmMockSessionState {
 		}
 
 		const code = this.injectBindingIrb(this.pendingStartCode, this.configuredBreakpoints);
+		const html = this.pendingStartHtml;
 		this.pendingStartCode = undefined;
+		this.pendingStartHtml = undefined;
+
 		void this.webviewPanel.webview.postMessage({
 			type: 'start',
 			code,
+			html,
 			breakpoints: this.configuredBreakpoints
 		});
 	}
@@ -645,6 +652,8 @@ class PicoRubyWasmMockSessionState {
 			const content = await readFile(programPath, 'utf8');
 			
 			if (programPath.toLowerCase().endsWith('.html') || programPath.toLowerCase().endsWith('.htm')) {
+				this.pendingStartHtml = content;
+
 				const lines = content.split('\n');
 				const scriptStartRegex = /<script\s+type=["'](?:text\/ruby|text\/picoruby)["'][^>]*>/i;
 				const scriptEndRegex = /<\/script>/i;
@@ -675,6 +684,7 @@ class PicoRubyWasmMockSessionState {
 			}
 
 			this.scriptStartLine = 1; // if it's .rb files and so on, it is always 1.
+			this.pendingStartHtml = undefined;
 			return content;
 		} catch (error: unknown) {
 			const message = error instanceof Error ? error.message : String(error);

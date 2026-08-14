@@ -88,6 +88,23 @@ suite('debug session adapter', () => {
 		assert.strictEqual(messages[1].event, 'initialized');
 	});
 
+	test('injects binding.irb only on injectable breakpoint lines', () => {
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+		const sourceCode = [
+			'puts "Line 1"',
+			'# Comment line',
+			'else',
+			'x = 10'
+		].join('\n');
+
+		const result = adapter.state.injectBindingIrb(sourceCode, [1, 2, 3, 4]);
+
+		assert.ok(result.includes('binding.irb; puts "Line 1"'));
+		assert.ok(result.includes('# Comment line'));
+		assert.ok(!result.includes('binding.irb; else'));
+		assert.ok(result.includes('binding.irb; x = 10'));
+	});
+
 	test('continue, next, and stepIn requests return success responses', () => {
 		const continueMessages = collectMessages('continue');
 		assert.strictEqual(continueMessages.length, 2);

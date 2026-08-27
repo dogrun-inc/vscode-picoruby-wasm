@@ -264,12 +264,18 @@ class PicoRubyWasmMockSessionState {
 	private pendingStartCode: string | undefined;
     /** HTML content waiting to be sent to the WebView runtime for DOM rendering. */
     private pendingStartHtml: string | undefined;
-	/** 1-based breakpoint lines configured in VS Code. */
-	private configuredBreakpoints: number[] = [];
 	/** Pending requests for webview mapped by their request ID. */
 	private pendingRequests = new Map<string, (data: any) => void>();
 	/** 1-based line number where the script started. Used to adjust stack frames. */
 	private scriptStartLine = 1;
+	/** Pending breakpoints mapped by their normalized file path. */
+    private breakpointsByPath = new Map<string, number[]>();
+
+    /** Retrieves the breakpoints configured for the currently active program. */
+    private get configuredBreakpoints(): number[] {
+        const key = this.activeProgram ? path.normalize(this.activeProgram).toLowerCase() : '';
+        return this.breakpointsByPath.get(key) || [];
+    }
 
 	/**
 	 * @param onWebviewLog Callback that notifies the caller of log strings received from the WebView.
@@ -405,18 +411,23 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
-	 * Updates configured breakpoints and forwards them to WebView runtime when ready.
+     * Updates configured breakpoints and forwards them to WebView runtime when ready.
 	 *
+	 * @param sourcePath The path of the source file for which breakpoints are being updated.
 	 * @param lines 1-based line numbers.
-	 */
-	updateBreakpoints(lines: number[]): void {
-		const offsetLines = lines.map(line => line - (this.scriptStartLine - 1));
+     */
+    updateBreakpoints(sourcePath: string | undefined, lines: number[]): void {
+        const key = sourcePath ? path.normalize(sourcePath).toLowerCase() : 'unknown';
+        const validLines = Array.from(
+            new Set(lines.filter((line) => Number.isInteger(line) && line > 0))
+        ).sort((left, right) => left - right);
 
-		this.configuredBreakpoints = Array.from(
-			new Set(offsetLines.filter((line) => Number.isInteger(line) && line > 0))
-		).sort((left, right) => left - right);
-		this.postBreakpointsIfReady();
-	}
+        // Save the valid lines for the given source path
+        this.breakpointsByPath.set(key, validLines);
+        this.onWebviewLog?.(`[trace] 1. updateBreakpoints for ${path.basename(key)} -> ${JSON.stringify(validLines)}`);
+
+        this.postBreakpointsIfReady();
+    }
 
 	/**
 	 * Resolves source lines used to validate breakpoint positions.
@@ -472,18 +483,22 @@ class PicoRubyWasmMockSessionState {
 	 * Injects binding.irb into the configured Ruby source lines.
 	 *
 	 * @param sourceCode Ruby source code.
-	 * @param breakpoints 1-based line numbers within the Ruby source.
+	 * @param breakpoints 1-based line numbers from VS Code (HTML line numbers).
 	 * @returns Ruby source code with debugger bindings injected.
 	 */
 	injectBindingIrb(sourceCode: string, breakpoints: number[]): string {
 		const lines = sourceCode.split('\n');
-		const normalizedBreakpoints = new Set(
-			breakpoints.filter((line) => Number.isInteger(line) && line > 0)
+		const offset = this.scriptStartLine - 1;
+
+		const rubyBreakpoints = new Set(
+			breakpoints
+				.map((htmlLine) => htmlLine - offset)
+				.filter((line) => Number.isInteger(line) && line > 0)
 		);
 
 		for (let index = 0; index < lines.length; index += 1) {
-			const lineNumber = index + 1;
-			if (!normalizedBreakpoints.has(lineNumber) || !this.isInjectableBreakpointLine(lineNumber, lines)) {
+			const lineNumber = index + 1; // 1-based Ruby line number corresponding to the current index
+			if (!rubyBreakpoints.has(lineNumber) || !this.isInjectableBreakpointLine(lineNumber, lines)) {
 				continue;
 			}
 
@@ -981,35 +996,29 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 * @param args Incoming breakpoint payload.
 	 */
 	protected setBreakpointsRequest(
-		response: any,
-		args: { source?: { path?: string }; breakpoints?: Array<{ line?: number; column?: number }> }
-	): void {
-		const requested = Array.isArray(args?.breakpoints) ? args.breakpoints : [];
-		const sourcePath = typeof args?.source?.path === 'string' ? args.source.path : undefined;
-		const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
-		const acceptedLines = requested
-			.map((bp) => bp?.line)
-			.filter(
-				(line): line is number =>
-					typeof line === 'number' &&
-					Number.isInteger(line) &&
-					line > 0 &&
-					this.state.isInjectableBreakpointLine(line, validationLines)
-			);
-		this.state.updateBreakpoints(acceptedLines);
-		const acceptedLineSet = new Set(acceptedLines);
-		response.body = {
-			breakpoints: requested.map((bp) => ({
-				verified:
-					typeof bp?.line === 'number' && Number.isInteger(bp.line)
-						? acceptedLineSet.has(bp.line)
-						: false,
-				line: typeof bp?.line === 'number' ? bp.line : undefined,
-				column: typeof bp?.column === 'number' ? bp.column : undefined
-			}))
-		};
-		this.sendResponse(response);
-	}
+        response: any,
+        args: { source?: { path?: string }; breakpoints?: Array<{ line?: number; column?: number }> }
+    ): void {
+        const requested = Array.isArray(args?.breakpoints) ? args.breakpoints : [];
+        const sourcePath = typeof args?.source?.path === 'string' ? args.source.path : undefined;
+
+        const acceptedLines = requested
+            .map((bp) => bp?.line)
+            .filter((line): line is number => typeof line === 'number' && Number.isInteger(line) && line > 0);
+
+        // 🌟 sourcePath を渡すように修正
+        this.state.updateBreakpoints(sourcePath, acceptedLines);
+
+        const acceptedLineSet = new Set(acceptedLines);
+        response.body = {
+            breakpoints: requested.map((bp) => ({
+                verified: typeof bp?.line === 'number' && Number.isInteger(bp.line) ? true : false,
+                line: typeof bp?.line === 'number' ? bp.line : undefined,
+                column: typeof bp?.column === 'number' ? bp.column : undefined
+            }))
+        };
+        this.sendResponse(response);
+    }
 
 	/**
 	 * Handles DAP threads requests.
@@ -1265,44 +1274,37 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				});
 				return;
 			case 'setBreakpoints': {
-				const requested = Array.isArray(message.arguments?.breakpoints)
-					? message.arguments.breakpoints
-					: [];
-				const sourcePath =
-					typeof message.arguments?.source?.path === 'string'
-						? message.arguments.source.path
-						: undefined;
-				const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
-				const acceptedLines = requested
-					.map((bp: { line?: number; column?: number }) => bp?.line)
-					.filter(
-						(line: unknown): line is number =>
-							typeof line === 'number' &&
-							Number.isInteger(line) &&
-							line > 0 &&
-							this.state.isInjectableBreakpointLine(line, validationLines)
-					);
-				this.state.updateBreakpoints(acceptedLines);
-				const acceptedLineSet = new Set(acceptedLines);
-				this.emit({
-					type: 'response',
-					seq: this.nextMessageSeq(),
-					request_seq: message.seq,
-					success: true,
-					command: 'setBreakpoints',
-					body: {
-						breakpoints: requested.map((bp: { line?: number; column?: number }) => ({
-							verified:
-								typeof bp?.line === 'number' && Number.isInteger(bp.line)
-									? acceptedLineSet.has(bp.line)
-									: false,
-							line: typeof bp?.line === 'number' ? bp.line : undefined,
-							column: typeof bp?.column === 'number' ? bp.column : undefined
-						}))
-					}
-				});
-				return;
-			}
+                const requested = Array.isArray(message.arguments?.breakpoints)
+                    ? message.arguments.breakpoints
+                    : [];
+                const sourcePath =
+                    typeof message.arguments?.source?.path === 'string'
+                        ? message.arguments.source.path
+                        : undefined;
+
+                const acceptedLines = requested
+                    .map((bp: { line?: number; column?: number }) => bp?.line)
+                    .filter((line: unknown): line is number => typeof line === 'number' && Number.isInteger(line) && line > 0);
+
+                this.state.updateBreakpoints(sourcePath, acceptedLines);
+
+                const acceptedLineSet = new Set(acceptedLines);
+                this.emit({
+                    type: 'response',
+                    seq: this.nextMessageSeq(),
+                    request_seq: message.seq,
+                    success: true,
+                    command: 'setBreakpoints',
+                    body: {
+                        breakpoints: requested.map((bp: { line?: number; column?: number }) => ({
+                            verified: typeof bp?.line === 'number' && Number.isInteger(bp.line) ? true : false,
+                            line: typeof bp?.line === 'number' ? bp.line : undefined,
+                            column: typeof bp?.column === 'number' ? bp.column : undefined
+                        }))
+                    }
+                });
+                return;
+            }
 			case 'threads':
 				this.emit({
 					type: 'response',

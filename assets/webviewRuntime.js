@@ -2,7 +2,7 @@ const vscode = typeof acquireVsCodeApi === 'function'
 	? acquireVsCodeApi()
 	: { postMessage: () => {} };
 
-const IDLE_TIMEOUT_MS = 3000;
+const IDLE_TIMEOUT_MS = 10000;
 
 /**
  * Converts a console argument into a loggable string.

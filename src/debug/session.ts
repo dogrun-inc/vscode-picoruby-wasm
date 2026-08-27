@@ -424,7 +424,6 @@ class PicoRubyWasmMockSessionState {
 
         // Save the valid lines for the given source path
         this.breakpointsByPath.set(key, validLines);
-        this.onWebviewLog?.(`[trace] 1. updateBreakpoints for ${path.basename(key)} -> ${JSON.stringify(validLines)}`);
 
         this.postBreakpointsIfReady();
     }
@@ -667,8 +666,8 @@ class PicoRubyWasmMockSessionState {
 			const content = await readFile(programPath, 'utf8');
 			
 			if (programPath.toLowerCase().endsWith('.html') || programPath.toLowerCase().endsWith('.htm')) {
-				this.pendingStartHtml = content;
-
+				this.pendingStartHtml = await this.inlineExternalCss(content, programPath);
+				
 				const lines = content.split('\n');
 				const scriptStartRegex = /<script\s+type=["'](?:text\/ruby|text\/picoruby)["'][^>]*>/i;
 				const scriptEndRegex = /<\/script>/i;
@@ -895,6 +894,32 @@ class PicoRubyWasmMockSessionState {
 			void this.webviewPanel.webview.postMessage(message);
 		}
 	}
+
+	/**
+     * Resolves local <link rel="stylesheet" href="..."> files and inlines them into <style> tags.
+     */
+    private async inlineExternalCss(htmlContent: string, htmlPath: string): Promise<string> {
+        const htmlDir = path.dirname(htmlPath);
+        const linkRegex = /<link\s+[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>|<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["']stylesheet["'][^>]*>/gi;
+
+        let resolvedHtml = htmlContent;
+        let match: RegExpExecArray | null;
+
+        while ((match = linkRegex.exec(htmlContent)) !== null) {
+            const cssHref = match[1] || match[2];
+            // HTTP(S) 等の外部URL以外のローカル相対パスを対象とする
+            if (cssHref && !cssHref.startsWith('http://') && !cssHref.startsWith('https://') && !cssHref.startsWith('//')) {
+                try {
+                    const cssPath = path.resolve(htmlDir, cssHref);
+                    const cssContent = await readFile(cssPath, 'utf8');
+                    resolvedHtml = resolvedHtml.replace(match[0], `<style>\n/* inlined: ${cssHref} */\n${cssContent}\n</style>`);
+                } catch (error) {
+                    this.onWebviewLog?.(`Failed to inline CSS file: ${cssHref}`);
+                }
+            }
+        }
+        return resolvedHtml;
+    }
 }
 
 /**

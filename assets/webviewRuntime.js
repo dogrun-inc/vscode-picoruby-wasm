@@ -507,20 +507,33 @@ window.addEventListener('message', async (event) => {
 	console.log('[debugger] webview message type=start');
 
 	if (data.html) {
-		try {
-			const parser = new DOMParser();
-			const doc = parser.parseFromString(data.html, 'text/html');
-			
-			// <script type="text/ruby"> タグをカットした body の中身を取得して描画
-			const rubyScripts = doc.querySelectorAll('script[type="text/ruby"], script[type="text/picoruby"]');
-			rubyScripts.forEach((script) => script.remove());
+        try {
+            console.log('[debugger] Rendering HTML DOM with styles...');
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(data.html, 'text/html');
 
-			// Webview の body に HTML 要素を挿入
-			document.body.innerHTML = doc.body.innerHTML;
-		} catch (e) {
-			console.error('Failed to render HTML content', e);
-		}
-	}
+            // <script type="text/ruby"> タグをカット
+            const rubyScripts = doc.querySelectorAll('script[type="text/ruby"], script[type="text/picoruby"]');
+            rubyScripts.forEach((script) => script.remove());
+
+            // 以前追加されたインラインスタイルがあればクリア（再実行時の重複防止）
+            document.querySelectorAll('style[data-runtime-injected="true"]').forEach((s) => s.remove());
+
+            // HTML内のすべての <style> タグ（<head>・<body>問わず）の内容をアクティブな document.head へ確実に注入
+            const styleElements = doc.querySelectorAll('style');
+            styleElements.forEach((styleTag) => {
+                const newStyle = document.createElement('style');
+                newStyle.setAttribute('data-runtime-injected', 'true');
+                newStyle.textContent = styleTag.textContent;
+                document.head.appendChild(newStyle);
+            });
+
+            // body 内の HTML 要素を Webview 画面に描画
+            document.body.innerHTML = doc.body.innerHTML;
+        } catch (e) {
+            console.error('Failed to render HTML content', e);
+        }
+    }
 
 	const instance = await moduleReady;
 	const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');

@@ -20,14 +20,17 @@ function collectMessages(command: string, args?: any): DebugMessage[] {
 		messages.push(message as DebugMessage);
 	});
 
-	adapter.handleMessage({
-		type: 'request',
-		seq: 1,
-		command,
-		arguments: args
-	});
-
-	subscription.dispose();
+	try {
+		adapter.handleMessage({
+			type: 'request',
+			seq: 1,
+			command,
+			arguments: args
+		});
+	} finally {
+		subscription.dispose();
+		adapter.dispose();
+	}
 	return messages;
 }
 
@@ -100,12 +103,16 @@ suite('debug session adapter', () => {
 			'x = 10'
 		].join('\n');
 
-		const result = adapter.state.injectBindingIrb(sourceCode, [1, 2, 3, 4]);
+		try {
+			const result = adapter.state.injectBindingIrb(sourceCode, [1, 2, 3, 4]);
 
-		assert.ok(result.includes('binding.irb; puts "Line 1"'));
-		assert.ok(result.includes('# Comment line'));
-		assert.ok(!result.includes('binding.irb; else'));
-		assert.ok(result.includes('binding.irb; x = 10'));
+			assert.ok(result.includes('binding.irb; puts "Line 1"'));
+			assert.ok(result.includes('# Comment line'));
+			assert.ok(!result.includes('binding.irb; else'));
+			assert.ok(result.includes('binding.irb; x = 10'));
+		} finally {
+			adapter.dispose();
+		}
 	});
 
 	test('extracts PicoRuby code when script type is not the first attribute', async () => {

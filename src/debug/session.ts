@@ -262,20 +262,20 @@ class PicoRubyWasmMockSessionState {
 	private webviewReady = false;
 	/** Ruby source code waiting to be sent to the WebView runtime. */
 	private pendingStartCode: string | undefined;
-    /** HTML content waiting to be sent to the WebView runtime for DOM rendering. */
-    private pendingStartHtml: string | undefined;
+	/** HTML content waiting to be sent to the WebView runtime for DOM rendering. */
+	private pendingStartHtml: string | undefined;
 	/** Pending requests for webview mapped by their request ID. */
 	private pendingRequests = new Map<string, (data: any) => void>();
 	/** 1-based line number where the script started. Used to adjust stack frames. */
 	private scriptStartLine = 1;
 	/** Pending breakpoints mapped by their normalized file path. */
-    private breakpointsByPath = new Map<string, number[]>();
+	private breakpointsByPath = new Map<string, number[]>();
 
-    /** Retrieves the breakpoints configured for the currently active program. */
-    private get configuredBreakpoints(): number[] {
-        const key = this.activeProgram ? path.normalize(this.activeProgram).toLowerCase() : '';
-        return this.breakpointsByPath.get(key) || [];
-    }
+	/** Retrieves the breakpoints configured for the currently active program. */
+	private get configuredBreakpoints(): number[] {
+		const key = this.activeProgram ? path.normalize(this.activeProgram).toLowerCase() : '';
+		return this.breakpointsByPath.get(key) || [];
+	}
 
 	/**
 	 * @param onWebviewLog Callback that notifies the caller of log strings received from the WebView.

@@ -644,35 +644,14 @@ async function createWasm() {
       }
     }
 
-  /** @type {!Int16Array} */
-  var HEAP16;
-
   /** @type {!Int32Array} */
   var HEAP32;
-
-  /** not-@type {!BigInt64Array} */
-  var HEAP64;
 
   /** @type {!Int8Array} */
   var HEAP8;
 
-  /** @type {!Float32Array} */
-  var HEAPF32;
-
-  /** @type {!Float64Array} */
-  var HEAPF64;
-
-  /** @type {!Uint16Array} */
-  var HEAPU16;
-
   /** @type {!Uint32Array} */
   var HEAPU32;
-
-  /** not-@type {!BigUint64Array} */
-  var HEAPU64;
-
-  /** @type {!Uint8Array} */
-  var HEAPU8;
 
   var callRuntimeCallbacks = (callbacks) => {
       while (callbacks.length > 0) {
@@ -687,26 +666,6 @@ async function createWasm() {
   var addOnPreRun = (cb) => onPreRuns.push(cb);
 
 
-  
-    /**
-   * @param {number} ptr
-   * @param {string} type
-   */
-  function getValue(ptr, type = 'i8') {
-    if (type.endsWith('*')) type = '*';
-    switch (type) {
-      case 'i1': return HEAP8[ptr];
-      case 'i8': return HEAP8[ptr];
-      case 'i16': return HEAP16[((ptr)>>1)];
-      case 'i32': return HEAP32[((ptr)>>2)];
-      case 'i64': return HEAP64[((ptr)>>3)];
-      case 'float': return HEAPF32[((ptr)>>2)];
-      case 'double': return HEAPF64[((ptr)>>3)];
-      case '*': return HEAPU32[((ptr)>>2)];
-      default: abort(`invalid type for getValue: ${type}`);
-    }
-  }
-
   var noExitRuntime = true;
 
   function ptrToString(ptr) {
@@ -715,27 +674,6 @@ async function createWasm() {
       ptr >>>= 0;
       return '0x' + ptr.toString(16).padStart(8, '0');
     }
-
-  
-    /**
-   * @param {number} ptr
-   * @param {number} value
-   * @param {string} type
-   */
-  function setValue(ptr, value, type = 'i8') {
-    if (type.endsWith('*')) type = '*';
-    switch (type) {
-      case 'i1': HEAP8[ptr] = value; break;
-      case 'i8': HEAP8[ptr] = value; break;
-      case 'i16': HEAP16[((ptr)>>1)] = value; break;
-      case 'i32': HEAP32[((ptr)>>2)] = value; break;
-      case 'i64': HEAP64[((ptr)>>3)] = BigInt(value); break;
-      case 'float': HEAPF32[((ptr)>>2)] = value; break;
-      case 'double': HEAPF64[((ptr)>>3)] = value; break;
-      case '*': HEAPU32[((ptr)>>2)] = value; break;
-      default: abort(`invalid type for setValue: ${type}`);
-    }
-  }
 
   var stackRestore = (val) => __emscripten_stack_restore(val);
 
@@ -818,6 +756,9 @@ async function createWasm() {
       }
       return str;
     };
+  
+  /** @type {!Uint8Array} */
+  var HEAPU8;
   
     /**
    * Given a pointer 'ptr' to a null-terminated UTF8-encoded string in the
@@ -1125,7 +1066,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
             } catch (e) {
               throw new FS.ErrnoError(29);
             }
-            if (result === undefined && bytesRead === 0) {
+            if (result === undefined && !bytesRead) {
               throw new FS.ErrnoError(6);
             }
             if (result === null || result === undefined) break;
@@ -1225,6 +1166,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       if (ptr) zeroMemory(ptr, size);
       return ptr;
     };
+  
   var MEMFS = {
   ops_table:null,
   mount(mount) {
@@ -1368,7 +1310,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           return attr;
         },
   setattr(node, attr) {
-          for (const key of ["mode", "atime", "mtime", "ctime"]) {
+          for (const key of ['mode', 'atime', 'mtime', 'ctime']) {
             if (attr[key] != null) {
               node[key] = attr[key];
             }
@@ -1454,10 +1396,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           node.mtime = node.ctime = Date.now();
   
           if (canOwn) {
-            assert(position === 0, 'canOwn must imply no weird position inside the file');
+            assert(!position, 'canOwn must imply no weird position inside the file');
             node.contents = buffer.subarray(offset, offset + length);
             node.usedBytes = length;
-          } else if (node.usedBytes === 0 && position === 0) { // If this is a simple first write to an empty file, do a fast set since we don't need to care about old data.
+          } else if (!node.usedBytes && !position) { // If this is a simple first write to an empty file, do a fast set since we don't need to care about old data.
             node.contents = buffer.slice(offset, offset + length);
             node.usedBytes = length;
           } else {
@@ -1745,7 +1687,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       assert(id, 'addRunDependency requires an ID')
       assert(!runDependencyTracking[id]);
       runDependencyTracking[id] = 1;
-      if (runDependencyWatcher === null && globalThis.setInterval) {
+      if (!runDependencyWatcher && globalThis.setInterval) {
         // Check for missing dependencies every few seconds
         runDependencyWatcher = setInterval(() => {
           if (ABORT) {
@@ -1809,6 +1751,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var FS_createPreloadedFile = (parent, name, url, canRead, canWrite, onload, onerror, dontCreateFile, canOwn, preFinish) => {
       FS_preloadFile(parent, name, url, canRead, canWrite, dontCreateFile, canOwn, preFinish).then(onload).catch(onerror);
     };
+  
   var FS = {
   root:null,
   mounts:[],
@@ -2800,7 +2743,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         });
       },
   open(path, flags, mode = 0o666) {
-        if (path === "") {
+        if (path === '') {
           throw new FS.ErrnoError(44);
         }
         flags = FS_modeStringToFlags(flags);
@@ -2814,7 +2757,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         if (typeof path == 'object') {
           node = path;
         } else {
-          isDirPath = path.endsWith("/");
+          isDirPath = path.endsWith('/');
           // noent_okay makes it so that if the final component of the path
           // doesn't exist, lookupPath returns `node: undefined`. `path` will be
           // updated to point to the target of all symlinks.
@@ -2996,8 +2939,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // to write to file opened in read-only mode with MAP_PRIVATE flag,
         // as all modifications will be visible only in the memory of
         // the current process.
-        if ((prot & 2) !== 0
-            && (flags & 2) === 0
+        if ((prot & 2)
+            && !(flags & 2)
             && (stream.flags & 2097155) !== 2) {
           throw new FS.ErrnoError(2);
         }
@@ -3090,7 +3033,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // use a buffer to avoid overhead of individual crypto calls per byte
         var randomBuffer = new Uint8Array(1024), randomLeft = 0;
         var randomByte = () => {
-          if (randomLeft === 0) {
+          if (!randomLeft) {
             randomFill(randomBuffer);
             randomLeft = randomBuffer.byteLength;
           }
@@ -3306,7 +3249,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               } catch (e) {
                 throw new FS.ErrnoError(29);
               }
-              if (result === undefined && bytesRead === 0) {
+              if (result === undefined && !bytesRead) {
                 throw new FS.ErrnoError(6);
               }
               if (result === null || result === undefined) break;
@@ -3337,7 +3280,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   forceLoadFile(obj) {
         if (obj.isDevice || obj.isFolder || obj.link || obj.contents) return true;
         if (globalThis.XMLHttpRequest) {
-          abort("Lazy loading should have been performed (contents set) in createLazyFile, but it was not. Lazy loading only works in web workers. Use --embed-file or --preload-file in emcc on the main thread.");
+          abort('Lazy loading should have been performed (contents set) in createLazyFile, but it was not. Lazy loading only works in web workers. Use --embed-file or --preload-file in emcc on the main thread.');
         } else { // Command-line.
           try {
             obj.contents = readBinary(obj.url);
@@ -3368,11 +3311,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
             var xhr = new XMLHttpRequest();
             xhr.open('HEAD', url, false);
             xhr.send(null);
-            if (!(xhr.status >= 200 && xhr.status < 300 || xhr.status === 304)) abort("Couldn't load " + url + ". Status: " + xhr.status);
-            var datalength = Number(xhr.getResponseHeader("Content-length"));
+            if (!(xhr.status >= 200 && xhr.status < 300 || xhr.status === 304)) abort(`Couldn't load ${url}. Status: ${xhr.status}`);
+            var datalength = Number(xhr.getResponseHeader('Content-length'));
             var header;
-            var hasByteServing = (header = xhr.getResponseHeader("Accept-Ranges")) && header === "bytes";
-            var usesGzip = (header = xhr.getResponseHeader("Content-Encoding")) && header === "gzip";
+            var hasByteServing = (header = xhr.getResponseHeader('Accept-Ranges')) && header === 'bytes';
+            var usesGzip = (header = xhr.getResponseHeader('Content-Encoding')) && header === 'gzip';
   
             var chunkSize = 1024*1024; // Chunk size in bytes
   
@@ -3386,7 +3329,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               // TODO: Use mozResponseArrayBuffer, responseStream, etc. if available.
               var xhr = new XMLHttpRequest();
               xhr.open('GET', url, false);
-              if (datalength !== chunkSize) xhr.setRequestHeader("Range", "bytes=" + from + "-" + to);
+              if (datalength !== chunkSize) xhr.setRequestHeader('Range', `bytes=${from}-${to}`);
   
               // Some hints to the browser that we want binary data.
               xhr.responseType = 'arraybuffer';
@@ -3395,7 +3338,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               }
   
               xhr.send(null);
-              if (!(xhr.status >= 200 && xhr.status < 300 || xhr.status === 304)) abort("Couldn't load " + url + ". Status: " + xhr.status);
+              if (!(xhr.status >= 200 && xhr.status < 300 || xhr.status === 304)) abort(`Couldn't load ${url}. Status: ${xhr.status}`);
               if (xhr.response !== undefined) {
                 return new Uint8Array(/** @type{Array<number>} */(xhr.response || []));
               }
@@ -3418,7 +3361,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               chunkSize = datalength = 1; // this will force getter(0)/doXHR do download the whole file
               datalength = this.getter(0).length;
               chunkSize = datalength;
-              out("LazyFiles on gzip forces download of the whole file when length is accessed");
+              out('LazyFiles on gzip forces download of the whole file when length is accessed');
             }
   
             this._length = datalength;
@@ -3508,6 +3451,12 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       },
   };
   
+  
+  
+  
+  
+  /** not-@type {!BigInt64Array} */
+  var HEAP64;
   var SYSCALLS = {
   currentUmask:18,
   calculateAt(dirfd, path, allowEmpty) {
@@ -3655,6 +3604,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var syscallGetVarargP = syscallGetVarargI;
   
   
+  
+  /** @type {!Int16Array} */
+  var HEAP16;
   function ___syscall_fcntl64(fd, cmd, varargs) {
   SYSCALLS.varargs = varargs;
   try {
@@ -3739,6 +3691,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   }
 
   
+  
   var stringToUTF8 = (str, outPtr, maxBytesToWrite) => {
       assert(typeof maxBytesToWrite == 'number', 'stringToUTF8 requires a third parameter that specifies the length of the output buffer');
       return stringToUTF8Array(str, HEAPU8, outPtr, maxBytesToWrite);
@@ -3746,7 +3699,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   function ___syscall_getcwd(buf, size) {
   try {
   
-      if (size === 0) return -28;
+      if (!size) return -28;
       var cwd = FS.cwd();
       var cwdLengthInBytes = lengthBytesUTF8(cwd) + 1;
       if (size < cwdLengthInBytes) return -68;
@@ -3759,6 +3712,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   }
   
 
+  
+  
+  
   
   function ___syscall_getdents64(fd, dirp, count) {
   try {
@@ -3820,6 +3776,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   }
   
 
+  
+  
+  
   
   function ___syscall_ioctl(fd, op, varargs) {
   SYSCALLS.varargs = varargs;
@@ -3981,6 +3940,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   }
   
 
+  
   var PIPEFS = {
   BUCKET_BUFFER_SIZE:8192,
   mount(mount) {
@@ -4240,17 +4200,17 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           // When the last write end closes, wake any poll/epoll waiter on the read
           // end with POLLHUP so a reader blocked on the writer dropping unblocks.
           if ((stream.flags & 2097155) === 1) {
-            if (--pipe.writerCount === 0) {
+            if (!--pipe.writerCount) {
               pipe.writeClosed = true;
               pipe.readNode.notifyListeners(16 | 64 | 1);
             }
-          } else if (--pipe.readerCount === 0) {
+          } else if (!--pipe.readerCount) {
             // Mirror: when the last read end closes, wake any poll/epoll waiter on
             // the write end with POLLERR (a further write would get EPIPE).
             pipe.readClosed = true;
             pipe.writeNode.notifyListeners(8 | 256 | 4);
           }
-          if (pipe.readerCount === 0 && pipe.writerCount === 0) {
+          if (!pipe.readerCount && !pipe.writerCount) {
             pipe.buckets = null;
           }
         },
@@ -4262,6 +4222,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return 'pipe[' + (PIPEFS.nextname.current++) + ']';
       },
   };
+  
   function ___syscall_pipe2(fdPtr, flags) {
   try {
   
@@ -4296,11 +4257,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       if (!stream) return 32;
       // Streams without a poll handler (regular files, incl. NODERAWFS/NODEFS
       // which leave stream_ops unset) are treated as always readable+writable.
-      var flags = stream.stream_ops?.poll
-        ? stream.stream_ops.poll(stream)
-        : 5;
+      var flags = stream.stream_ops?.poll?.(stream) ?? 5;
       return flags & (events | 8 | 16 | 32);
     };
+  
+  
   var doPollSync = (fds, nfds) => {
       var count = 0;
       for (var i = 0, pollfd = fds; i < nfds; i++, pollfd += 8) {
@@ -4336,6 +4297,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   }
   
 
+  
   
   
   function ___syscall_readlinkat(dirfd, path, buf, bufsize) {
@@ -4475,6 +4437,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       return yday;
     };
   
+  
   function __localtime_js(time, tmPtr) {
     time = bigintToI53Checked(time);
   
@@ -4505,6 +4468,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     ;
   }
 
+  
   
   var __mktime_js = function(tmPtr) {
   
@@ -4579,6 +4543,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   }
 
   
+  
+  
   var __tzset_js = (timezone, daylight, std_name, dst_name) => {
       // TODO: Use (malleable) environment variables instead of system settings.
       var currentYear = new Date().getFullYear();
@@ -4607,11 +4573,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       var extractZone = (timezoneOffset) => {
         // Why inverse sign?
         // Read here https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/getTimezoneOffset
-        var sign = timezoneOffset >= 0 ? "-" : "+";
+        var sign = timezoneOffset >= 0 ? '-' : '+';
   
         var absOffset = Math.abs(timezoneOffset)
-        var hours = String(Math.floor(absOffset / 60)).padStart(2, "0");
-        var minutes = String(absOffset % 60).padStart(2, "0");
+        var hours = String(Math.floor(absOffset / 60)).padStart(2, '0');
+        var minutes = String(absOffset % 60).padStart(2, '0');
   
         return `UTC${sign}${hours}${minutes}`;
       }
@@ -4639,6 +4605,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   var checkWasiClock = (clock_id) => clock_id >= 0 && clock_id <= 3;
   
+  
   function _clock_time_get(clk_id, ignored_precision, ptime) {
     ignored_precision = bigintToI53Checked(ignored_precision);
   
@@ -4663,6 +4630,13 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   }
 
   var readEmAsmArgsArray = [];
+  
+  
+  
+  
+  /** @type {!Float64Array} */
+  var HEAPF64;
+  
   var readEmAsmArgs = (sigPtr, buf) => {
       // Nobody should have mutated _readEmAsmArgsArray underneath us to be something else than an array.
       assert(Array.isArray(readEmAsmArgsArray));
@@ -4728,9 +4702,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       } catch(e) {
         err(`growMemory: Attempted to grow heap from ${oldHeapSize} bytes to ${size} bytes, but got error: ${e}`);
       }
-      // implicit 0 return to save code size (caller will cast "undefined" into 0
+      // implicit 0 return to save code size (caller will cast 'undefined' into 0
       // anyhow)
     };
+  
   var _emscripten_resize_heap = (requestedSize) => {
       var oldSize = HEAPU8.length;
       // With CAN_ADDRESS_2GB or MEMORY64, pointers are already unsigned.
@@ -4818,6 +4793,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       return getEnvStrings.strings;
     };
   
+  
   var _environ_get = (__environ, environ_buf) => {
       var bufSize = 0;
       var envp = 0;
@@ -4830,6 +4806,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       return 0;
     };
 
+  
   
   var _environ_sizes_get = (penviron_count, penviron_buf_size) => {
       var strings = getEnvStrings();
@@ -4883,6 +4860,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   }
   
 
+  
+  
+  
   function _fd_fdstat_get(fd, pbuf) {
   try {
   
@@ -4910,6 +4890,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   }
   
 
+  
   /** @param {number=} offset */
   var doReadv = (stream, iov, iovcnt, offset) => {
       var ret = 0;
@@ -4940,6 +4921,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     };
   
   
+  
   function _fd_pread(fd, iov, iovcnt, offset, pnum) {
     offset = bigintToI53Checked(offset);
   
@@ -4958,6 +4940,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   ;
   }
 
+  
+  
   /** @param {number=} offset */
   var doWritev = (stream, iov, iovcnt, offset) => {
       // Gather all iovecs into one contiguous buffer and issue a single
@@ -4984,6 +4968,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     };
   
   
+  
   function _fd_pwrite(fd, iov, iovcnt, offset, pnum) {
     offset = bigintToI53Checked(offset);
   
@@ -5003,6 +4988,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   }
 
   
+  
   function _fd_read(fd, iov, iovcnt, pnum) {
   try {
   
@@ -5018,6 +5004,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
 
   
+  
   function _fd_seek(fd, offset, whence, newOffset) {
     offset = bigintToI53Checked(offset);
   
@@ -5028,7 +5015,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       var stream = SYSCALLS.getStreamFromFD(fd);
       FS.llseek(stream, offset, whence);
       HEAP64[((newOffset)>>3)] = BigInt(stream.position);
-      if (stream.getdents && offset === 0 && whence === 0) stream.getdents = null; // reset readdir state
+      if (stream.getdents && !offset && whence === 0) stream.getdents = null; // reset readdir state
       return 0;
     } catch (e) {
     if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
@@ -5051,6 +5038,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
 
   
+  
   function _fd_write(fd, iov, iovcnt, pnum) {
   try {
   
@@ -5064,6 +5052,74 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   }
   }
   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  /** @type {!Uint16Array} */
+  var HEAPU16;
+
+
+
+  /** @type {!Float32Array} */
+  var HEAPF32;
+
+
+
+  /** not-@type {!BigUint64Array} */
+  var HEAPU64;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -5131,7 +5187,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         for (var i = 0; i < args.length; i++) {
           var converter = toC[argTypes[i]];
           if (converter) {
-            if (stack === 0) stack = stackSave();
+            if (!stack) stack = stackSave();
             cArgs[i] = converter(args[i]);
           } else {
             cArgs[i] = args[i];
@@ -5140,7 +5196,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }
       var ret = func(...cArgs);
       function onDone(ret) {
-        if (stack !== 0) stackRestore(stack);
+        if (stack) stackRestore(stack);
         return convertReturnValue(ret);
       }
   
@@ -5269,6 +5325,8 @@ if (Module['printErr']) err = Module['printErr'];
   'getFunctionAddress',
   'addFunction',
   'removeFunction',
+  'setValue',
+  'getValue',
   'intArrayToString',
   'AsciiToString',
   'stringToAscii',
@@ -5337,10 +5395,6 @@ if (Module['printErr']) err = Module['printErr'];
   'addPromise',
   'idsToPromises',
   'makePromiseCallback',
-  'ExceptionInfo',
-  'findMatchingCatch',
-  'incrementUncaughtExceptionCount',
-  'decrementUncaughtExceptionCount',
   'Browser_asyncPrepareDataCounter',
   'arraySum',
   'addDays',
@@ -5371,14 +5425,10 @@ if (Module['printErr']) err = Module['printErr'];
   'writeGLArray',
   'registerWebGlEventCallback',
   'runAndAbortIfError',
-  'ALLOC_NORMAL',
-  'ALLOC_STACK',
-  'allocate',
   'writeStringToMemory',
   'writeAsciiToMemory',
   'allocateUTF8',
   'allocateUTF8OnStack',
-  'demangle',
   'stackTrace',
   'getNativeTypeSize',
 ];
@@ -5439,8 +5489,6 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'addOnPostRun',
   'freeTableIndexes',
   'functionsInTableMap',
-  'setValue',
-  'getValue',
   'PATH',
   'PATH_FS',
   'UTF8Decoder',
@@ -5466,11 +5514,8 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'emClearImmediate_deps',
   'emClearImmediate',
   'promiseMap',
-  'uncaughtExceptionCount',
-  'exceptionCaught',
   'Browser',
   'requestFullscreen',
-  'requestFullScreen',
   'setCanvasSize',
   'getUserMedia',
   'createContext',
@@ -5658,20 +5703,20 @@ function checkIncomingModuleAPI() {
   ignoredModuleProp('wasmBinary');
 }
 var ASM_CONSTS = {
-  2666374: ($0) => { globalThis.picorubyRefs[$0] = null; },  
- 2666414: ($0) => { globalThis.picorubyRefs[$0] = true; },  
- 2666454: ($0) => { globalThis.picorubyRefs[$0] = false; },  
- 2666495: ($0, $1) => { globalThis.picorubyRefs[$0] = $1; },  
- 2666533: ($0, $1) => { globalThis.picorubyRefs[$0] = $1; },  
- 2666571: ($0, $1, $2) => { const str = UTF8ToString($1, $2); globalThis.picorubyRefs[$0] = str; },  
- 2666644: ($0, $1) => { const arr = globalThis.picorubyRefs[$0]; const elem = globalThis.picorubyRefs[$1]; arr.push(elem); delete globalThis.picorubyRefs[$1]; },  
- 2666783: ($0, $1, $2) => { const obj = globalThis.picorubyRefs[$0]; const key = UTF8ToString($1); const val = globalThis.picorubyRefs[$2]; obj[key] = val; delete globalThis.picorubyRefs[$2]; }
+  2831622: ($0) => { globalThis.picorubyRefs[$0] = null; },  
+ 2831662: ($0) => { globalThis.picorubyRefs[$0] = true; },  
+ 2831702: ($0) => { globalThis.picorubyRefs[$0] = false; },  
+ 2831743: ($0, $1) => { globalThis.picorubyRefs[$0] = $1; },  
+ 2831781: ($0, $1) => { globalThis.picorubyRefs[$0] = $1; },  
+ 2831819: ($0, $1, $2) => { const str = UTF8ToString($1, $2); globalThis.picorubyRefs[$0] = str; },  
+ 2831892: ($0, $1) => { const arr = globalThis.picorubyRefs[$0]; const elem = globalThis.picorubyRefs[$1]; arr.push(elem); delete globalThis.picorubyRefs[$1]; },  
+ 2832031: ($0, $1, $2) => { const obj = globalThis.picorubyRefs[$0]; const key = UTF8ToString($1); const val = globalThis.picorubyRefs[$2]; obj[key] = val; delete globalThis.picorubyRefs[$2]; }
 };
 function ble_dataview_length(ref_id) { try { const dv = globalThis.picorubyRefs[ref_id]; if (dv && dv.byteLength !== undefined) { return dv.byteLength; } return 0; } catch(e) { console.error('ble_dataview_length failed:', e); return 0; } }
 function ble_dataview_read(ref_id,out_buf,max_len) { try { const dv = globalThis.picorubyRefs[ref_id]; if (!dv) return 0; const len = Math.min(dv.byteLength, max_len); for (let i = 0; i < len; i++) { HEAPU8[out_buf + i] = dv.getUint8(i); } return len; } catch(e) { console.error('ble_dataview_read failed:', e); return 0; } }
 function ble_create_uint8array(data,length) { try { const buffer = new Uint8Array(HEAPU8.buffer, data, length); const copy = new Uint8Array(buffer); const refId = globalThis.picorubyRefs.push(copy) - 1; return refId; } catch(e) { console.error('ble_create_uint8array failed:', e); return -1; } }
-function ble_set_notify_handler(char_ref_id,callback_id) { try { const char_obj = globalThis.picorubyRefs[char_ref_id]; char_obj.addEventListener('characteristicvaluechanged', (event) => { const dataview = event.target.value; const len = dataview.byteLength; const ptr = _malloc(len); for (let i = 0; i < len; i++) { HEAPU8[ptr + i] = dataview.getUint8(i); } ccall( 'ble_notify_callback', 'void', ['number', 'number', 'number'], [callback_id, ptr, len] ); _free(ptr); }); } catch(e) { console.error('ble_set_notify_handler failed:', e); } }
-function init_js_refs() { if (typeof globalThis.picorubyRefs === 'undefined') { globalThis.picorubyRefs = []; const rootObject = typeof window !== 'undefined' ? window : globalThis; globalThis.picorubyRefs.push(rootObject); } if (typeof window !== 'undefined' && typeof window._js_remove_event_listener_wrapper === 'undefined') { window._js_remove_event_listener_wrapper = function(callback_id) { if (!globalThis.picorubyEventHandlers) return false; const info = globalThis.picorubyEventHandlers[callback_id]; if (!info) return false; info.target.removeEventListener(info.type, info.handler); delete globalThis.picorubyEventHandlers[callback_id]; return true; }; } }
+function ble_set_notify_handler(char_ref_id,callback_id) { try { const char_obj = globalThis.picorubyRefs[char_ref_id]; if (char_obj.__picorbNotifyListener) { char_obj.removeEventListener('characteristicvaluechanged', char_obj.__picorbNotifyListener); } const listener = (event) => { const dataview = event.target.value; const len = dataview.byteLength; const ptr = _malloc(len); for (let i = 0; i < len; i++) { HEAPU8[ptr + i] = dataview.getUint8(i); } ccall( 'ble_notify_callback', 'void', ['number', 'number', 'number'], [callback_id, ptr, len] ); _free(ptr); }; char_obj.__picorbNotifyListener = listener; char_obj.addEventListener('characteristicvaluechanged', listener); } catch(e) { console.error('ble_set_notify_handler failed:', e); } }
+function init_js_refs() { if (typeof globalThis.picorubyRefs === 'undefined') { globalThis.picorubyRefs = []; const rootObject = typeof window !== 'undefined' ? window : globalThis; globalThis.picorubyRefs.push(rootObject); } if (typeof window !== 'undefined' && typeof window._js_remove_event_listener_wrapper === 'undefined') { window._js_remove_event_listener_wrapper = function(callback_id) { if (!globalThis.picorubyEventHandlers) return false; const info = globalThis.picorubyEventHandlers[callback_id]; if (!info) return false; info.target.removeEventListener(info.type, info.handler, !!info.capture); delete globalThis.picorubyEventHandlers[callback_id]; return true; }; } }
 function js_last_error_length() { const message = globalThis.picorubyLastError; return message ? lengthBytesUTF8(message) : 0; }
 function js_copy_last_error(buffer,buffer_size) { const message = globalThis.picorubyLastError; if (!message) { globalThis.picorubyLastError = null; return; } stringToUTF8(message, buffer, buffer_size); globalThis.picorubyLastError = null; }
 function is_array_like(ref_id) { const obj = globalThis.picorubyRefs[ref_id]; const isNodeList = typeof NodeList !== 'undefined' && obj instanceof NodeList; const isHTMLCollection = typeof HTMLCollection !== 'undefined' && obj instanceof HTMLCollection; return isNodeList || isHTMLCollection || (typeof obj === 'object' && obj !== null && 'length' in obj && typeof obj.length === 'number'); }
@@ -5705,12 +5750,12 @@ function call_constructor_with_args(ref_id,args_json,args_json_len) { globalThis
 function js_function_apply_args(func_ref_id,args_json,args_json_len) { globalThis.picorubyLastError = null; try { const fn = globalThis.picorubyRefs[func_ref_id]; if (typeof fn !== 'function') { console.error('js_function_apply_args: not a function'); return -1; } const argsData = JSON.parse(UTF8ToString(args_json, args_json_len)); if (!Array.isArray(argsData)) { console.error('js_function_apply_args: args_json must be a JSON array'); return -1; } const args = argsData.map(arg => { switch (arg.type) { case 'string': case 'integer': case 'float': case 'boolean': return arg.value; case 'ref': return globalThis.picorubyRefs[arg.value]; case 'nil': return null; default: return null; } }); const result = fn(...args); const newRefId = globalThis.picorubyRefs.length; globalThis.picorubyRefs.push(result); return newRefId; } catch(e) { globalThis.picorubyLastError = e && typeof e.message === 'string' ? e.message : String(e); return -1; } }
 function call_fetch_with_json_options(ref_id,url,options_json) { globalThis.picorubyLastError = null; try { const obj = globalThis.picorubyRefs[ref_id]; const urlStr = UTF8ToString(url); const optionsStr = UTF8ToString(options_json); const options = JSON.parse(optionsStr); const result = obj.fetch(urlStr, options); const newRefId = globalThis.picorubyRefs.length; globalThis.picorubyRefs.push(result); return newRefId; } catch(e) { globalThis.picorubyLastError = e && typeof e.message === 'string' ? e.message : String(e); return -1; } }
 function setup_promise_handler(promise_id,callback_id,mrb_ptr,task_ptr) { const promise = globalThis.picorubyRefs[promise_id]; promise.then( (result) => { const resultId = globalThis.picorubyRefs.length; globalThis.picorubyRefs.push(result); ccall( 'resume_promise_task', 'void', ['number', 'number', 'number', 'number'], [mrb_ptr, task_ptr, callback_id, resultId] ); } ).catch( (error) => { const message = error && typeof error.message === 'string' ? error.message : String(error); const size = lengthBytesUTF8(message) + 1; const errorPtr = _malloc(size); stringToUTF8(message, errorPtr, size); ccall( 'resume_promise_error_task', 'void', ['number', 'number', 'number', 'number'], [mrb_ptr, task_ptr, callback_id, errorPtr] ); } ); }
-function js_add_event_listener(ref_id,callback_id,event_type) { const target = globalThis.picorubyRefs[ref_id]; const type = UTF8ToString(event_type); const handler = (event) => { if (!globalThis.picorubyEventHandlers || !globalThis.picorubyEventHandlers[callback_id]) { return; } if (type === 'submit' || (type === 'click' && target.tagName === 'A')) { event.preventDefault(); } const eventRefId = globalThis.picorubyRefs.push(event) - 1; ccall( 'call_ruby_callback', 'void', ['number', 'number'], [callback_id, eventRefId] ); }; target.addEventListener(type, handler); if (!globalThis.picorubyEventHandlers) { globalThis.picorubyEventHandlers = {}; } globalThis.picorubyEventHandlers[callback_id] = { target, type, handler }; }
+function js_add_event_listener(ref_id,callback_id,event_type,sync,capture,once,passive) { const target = globalThis.picorubyRefs[ref_id]; const type = UTF8ToString(event_type); const isSync = !!sync; const isOnce = !!once; const isCapture = !!capture; let options = undefined; if (isCapture || isOnce || passive >= 0) { options = { capture: isCapture, once: isOnce }; if (passive >= 0) options.passive = (passive === 1); } const handler = (event) => { if (!globalThis.picorubyEventHandlers || !globalThis.picorubyEventHandlers[callback_id]) { return; } if (isOnce) { delete globalThis.picorubyEventHandlers[callback_id]; } if (!isSync && passive !== 1 && (type === 'submit' || (type === 'click' && target.tagName === 'A'))) { event.preventDefault(); } const eventRefId = globalThis.picorubyRefs.push(event) - 1; if (isSync) { try { ccall( 'call_ruby_callback_sync_event', 'void', ['number', 'number', 'number'], [callback_id, eventRefId, isOnce ? 1 : 0] ); } finally { delete globalThis.picorubyRefs[eventRefId]; } } else { ccall( isOnce ? 'call_ruby_callback_oneshot' : 'call_ruby_callback', 'void', ['number', 'number'], [callback_id, eventRefId] ); } }; if (options) { target.addEventListener(type, handler, options); } else { target.addEventListener(type, handler); } if (!globalThis.picorubyEventHandlers) { globalThis.picorubyEventHandlers = {}; } globalThis.picorubyEventHandlers[callback_id] = { target, type, handler, capture: isCapture }; }
 function js_register_generic_callback(callback_id,callback_name) { const name = UTF8ToString(callback_name); if (!globalThis.picorubyGenericCallbacks) { globalThis.picorubyGenericCallbacks = {}; } globalThis.picorubyGenericCallbacks[name] = function(...args) { const argRefIds = args.map(arg => { const refId = globalThis.picorubyRefs.push(arg) - 1; return refId; }); const argRefIdsPtr = _malloc(argRefIds.length * 4); for (let i = 0; i < argRefIds.length; i++) { HEAP32[(argRefIdsPtr >> 2) + i] = argRefIds[i]; } const resultRefId = ccall( 'call_ruby_callback_sync_generic', 'number', ['number', 'number', 'number'], [callback_id, argRefIdsPtr, argRefIds.length] ); _free(argRefIdsPtr); if (resultRefId >= 0 && resultRefId < globalThis.picorubyRefs.length) { return globalThis.picorubyRefs[resultRefId]; } return undefined; }; }
 function js_create_callback_function(callback_id) { try { const fn = function(...args) { const argRefIds = args.map(arg => globalThis.picorubyRefs.push(arg) - 1); const argRefIdsPtr = _malloc(argRefIds.length * 4); for (let i = 0; i < argRefIds.length; i++) { HEAP32[(argRefIdsPtr >> 2) + i] = argRefIds[i]; } const resultRefId = ccall( 'call_ruby_callback_sync_generic', 'number', ['number', 'number', 'number'], [callback_id, argRefIdsPtr, argRefIds.length] ); _free(argRefIdsPtr); if (resultRefId >= 0 && resultRefId < globalThis.picorubyRefs.length) { return globalThis.picorubyRefs[resultRefId]; } return undefined; }; return globalThis.picorubyRefs.push(fn) - 1; } catch (e) { console.error('js_create_callback_function failed:', e); return -1; } }
 function js_set_timeout(callback_id,delay_ms) { const timerId = setTimeout(function() { if (!globalThis.picorubyTimeoutHandlers || !globalThis.picorubyTimeoutHandlers[callback_id]) { return; } ccall( 'call_ruby_callback_oneshot', 'void', ['number', 'number'], [callback_id, -1] ); delete globalThis.picorubyTimeoutHandlers[callback_id]; }, delay_ms); if (!globalThis.picorubyTimeoutHandlers) { globalThis.picorubyTimeoutHandlers = {}; } globalThis.picorubyTimeoutHandlers[callback_id] = timerId; return timerId; }
 function js_clear_timeout(callback_id) { try { if (!globalThis.picorubyTimeoutHandlers) return false; const timerId = globalThis.picorubyTimeoutHandlers[callback_id]; if (timerId === undefined) return false; clearTimeout(timerId); delete globalThis.picorubyTimeoutHandlers[callback_id]; return true; } catch(e) { console.error('Error in js_clear_timeout:', e); return false; } }
-function js_remove_event_listener(callback_id) { try { if (!globalThis.picorubyEventHandlers) return false; const info = globalThis.picorubyEventHandlers[callback_id]; if (!info) return false; info.target.removeEventListener(info.type, info.handler); delete globalThis.picorubyEventHandlers[callback_id]; return true; } catch(e) { console.error('Error in js_remove_event_listener:', e); return false; } }
+function js_remove_event_listener(callback_id) { try { if (!globalThis.picorubyEventHandlers) return false; const info = globalThis.picorubyEventHandlers[callback_id]; if (!info) return false; info.target.removeEventListener(info.type, info.handler, !!info.capture); delete globalThis.picorubyEventHandlers[callback_id]; return true; } catch(e) { console.error('Error in js_remove_event_listener:', e); return false; } }
 function js_create_element(tag_name) { try { const element = document.createElement(UTF8ToString(tag_name)); const refId = globalThis.picorubyRefs.push(element) - 1; return refId; } catch(e) { console.error('Error in js_create_element:', e); return -1; } }
 function js_create_text_node(text) { try { const node = document.createTextNode(UTF8ToString(text)); const refId = globalThis.picorubyRefs.push(node) - 1; return refId; } catch(e) { console.error('Error in js_create_text_node:', e); return -1; } }
 function js_create_object() { try { const obj = {}; const refId = globalThis.picorubyRefs.push(obj) - 1; return refId; } catch(e) { console.error('Error in js_create_object:', e); return -1; } }
@@ -5766,9 +5811,9 @@ function ws_set_onopen(ref_id,callback_id) { const ws = globalThis.picorubyRefs[
 function ws_set_onmessage(ref_id,callback_id) { const ws = globalThis.picorubyRefs[ref_id]; ws.onmessage = (event) => { let data = event.data; if (data instanceof ArrayBuffer) { const uint8Array = new Uint8Array(data); const length = uint8Array.length; const ptr = _malloc(length); HEAPU8.set(uint8Array, ptr); ccall( 'call_ruby_callback_with_binary_data', 'void', ['number', 'number', 'number'], [callback_id, ptr, length] ); } else { const eventRefId = globalThis.picorubyRefs.push(event) - 1; ccall( 'call_ruby_callback', 'void', ['number', 'number'], [callback_id, eventRefId] ); } }; }
 function ws_set_onerror(ref_id,callback_id) { const ws = globalThis.picorubyRefs[ref_id]; ws.onerror = (event) => { const eventRefId = globalThis.picorubyRefs.push(event) - 1; ccall( 'call_ruby_callback_oneshot', 'void', ['number', 'number'], [callback_id, eventRefId] ); }; }
 function ws_set_onclose(ref_id,callback_id) { const ws = globalThis.picorubyRefs[ref_id]; ws.onclose = (event) => { const eventRefId = globalThis.picorubyRefs.push(event) - 1; ccall( 'call_ruby_callback_oneshot', 'void', ['number', 'number'], [callback_id, eventRefId] ); }; }
-function idb_request_to_promise(req_ref_id) { try { const req = globalThis.picorubyRefs[req_ref_id]; if (!req) { console.error('idb_request_to_promise: invalid ref_id', req_ref_id); return -1; } const promise = new Promise((resolve, reject) => { req.onsuccess = () => { resolve(req.result); }; req.onerror = () => { const msg = (req.error && req.error.message) || 'IDB request failed'; reject(new Error(msg)); }; }); return globalThis.picorubyRefs.push(promise) - 1; } catch (e) { console.error('idb_request_to_promise failed:', e); return -1; } }
-function idb_open_with_upgrade(name_ptr,version,callback_id) { try { const name = UTF8ToString(name_ptr); const idb = globalThis.indexedDB; if (!idb) { console.error('idb_open_with_upgrade: indexedDB unavailable'); return -1; } const req = (version > 0) ? idb.open(name, version) : idb.open(name); req.onupgradeneeded = (event) => { if (callback_id === 0) return; const db = req.result; const oldV = event.oldVersion; const newV = event.newVersion; const dbRef = globalThis.picorubyRefs.push(db) - 1; const oldRef = globalThis.picorubyRefs.push(oldV) - 1; const newRef = globalThis.picorubyRefs.push(newV) - 1; const argRefIds = [dbRef, oldRef, newRef]; const argRefIdsPtr = _malloc(argRefIds.length * 4); for (let i = 0; i < argRefIds.length; i++) { HEAP32[(argRefIdsPtr >> 2) + i] = argRefIds[i]; } try { ccall( 'call_ruby_callback_sync_generic', 'number', ['number', 'number', 'number'], [callback_id, argRefIdsPtr, argRefIds.length] ); } catch (e) { console.error('idb upgrade callback threw:', e); } finally { _free(argRefIdsPtr); } }; const promise = new Promise((resolve, reject) => { req.onsuccess = () => { resolve(req.result); }; req.onerror = () => { const msg = (req.error && req.error.message) || 'IDB open failed'; reject(new Error(msg)); }; req.onblocked = () => { reject(new Error('IDB open blocked: another connection holds an older version')); }; }); return globalThis.picorubyRefs.push(promise) - 1; } catch (e) { console.error('idb_open_with_upgrade failed:', e); return -1; } }
-function idb_transaction_to_promise(tx_ref_id) { try { const tx = globalThis.picorubyRefs[tx_ref_id]; if (!tx) { console.error('idb_transaction_to_promise: invalid ref_id', tx_ref_id); return -1; } const promise = new Promise((resolve, reject) => { tx.oncomplete = () => { resolve(true); }; tx.onerror = () => { const msg = (tx.error && tx.error.message) || 'IDB transaction error'; reject(new Error(msg)); }; tx.onabort = () => { const msg = (tx.error && tx.error.message) || 'IDB transaction aborted'; reject(new Error(msg)); }; }); return globalThis.picorubyRefs.push(promise) - 1; } catch (e) { console.error('idb_transaction_to_promise failed:', e); return -1; } }
+function idb_request_to_promise(req_ref_id) { try { const req = globalThis.picorubyRefs[req_ref_id]; if (!req) { console.error('idb_request_to_promise: invalid ref_id', req_ref_id); return -1; } const promise = new Promise((resolve) => { req.onsuccess = () => { resolve({ ok: true, value: req.result }); }; req.onerror = () => { resolve({ ok: false, name: (req.error && req.error.name) || 'UnknownError', message: (req.error && req.error.message) || 'IDB request failed' }); }; }); return globalThis.picorubyRefs.push(promise) - 1; } catch (e) { console.error('idb_request_to_promise failed:', e); return -1; } }
+function idb_open_with_upgrade(name_ptr,version,callback_id,blocked_timeout_ms) { try { const name = UTF8ToString(name_ptr); const idb = globalThis.indexedDB; if (!idb) { console.error('idb_open_with_upgrade: indexedDB unavailable'); return -1; } let req; try { req = (version > 0) ? idb.open(name, version) : idb.open(name); } catch (e) { const promise = Promise.resolve({ ok: false, name: (e && e.name) || 'UnknownError', message: (e && e.message) || 'IDB open failed' }); return globalThis.picorubyRefs.push(promise) - 1; } let settled = false; let timedOut = false; let blockedTimer = null; req.onupgradeneeded = (event) => { if (timedOut) { try { if (req.transaction) req.transaction.abort(); } catch (e) { console.error('failed to abort late IDB upgrade:', e); } return; } if (callback_id === 0) return; const db = req.result; const oldV = event.oldVersion; const newV = event.newVersion; const dbRef = globalThis.picorubyRefs.push(db) - 1; const oldRef = globalThis.picorubyRefs.push(oldV) - 1; const newRef = globalThis.picorubyRefs.push(newV) - 1; const argRefIds = [dbRef, oldRef, newRef]; const argRefIdsPtr = _malloc(argRefIds.length * 4); for (let i = 0; i < argRefIds.length; i++) { HEAP32[(argRefIdsPtr >> 2) + i] = argRefIds[i]; } try { ccall( 'call_ruby_callback_sync_generic', 'number', ['number', 'number', 'number'], [callback_id, argRefIdsPtr, argRefIds.length] ); } catch (e) { console.error('idb upgrade callback threw:', e); } finally { _free(argRefIdsPtr); } }; const promise = new Promise((resolve) => { const settle = (result) => { if (settled) return; settled = true; if (blockedTimer) { clearTimeout(blockedTimer); blockedTimer = null; } resolve(result); }; req.onsuccess = () => { if (settled) { try { req.result.close(); } catch (e) {} return; } settle({ ok: true, value: req.result }); }; req.onerror = () => { settle({ ok: false, name: (req.error && req.error.name) || 'UnknownError', message: (req.error && req.error.message) || 'IDB open failed' }); }; req.onblocked = () => { if (settled || blockedTimer) return; blockedTimer = setTimeout(() => { timedOut = true; settle({ ok: false, name: 'PicoRubyBlockedTimeout', message: 'IDB open blocked: another connection held an older version past the timeout' }); }, blocked_timeout_ms); }; }); return globalThis.picorubyRefs.push(promise) - 1; } catch (e) { console.error('idb_open_with_upgrade failed:', e); return -1; } }
+function idb_transaction_to_promise(tx_ref_id) { try { const tx = globalThis.picorubyRefs[tx_ref_id]; if (!tx) { console.error('idb_transaction_to_promise: invalid ref_id', tx_ref_id); return -1; } const promise = new Promise((resolve) => { tx.oncomplete = () => { resolve({ ok: true, value: true }); }; tx.onerror = () => { resolve({ ok: false, name: (tx.error && tx.error.name) || 'UnknownError', message: (tx.error && tx.error.message) || 'IDB transaction error' }); }; tx.onabort = () => { resolve({ ok: false, name: (tx.error && tx.error.name) || 'AbortError', message: (tx.error && tx.error.message) || 'IDB transaction aborted' }); }; }); return globalThis.picorubyRefs.push(promise) - 1; } catch (e) { console.error('idb_transaction_to_promise failed:', e); return -1; } }
 function emscripten_date_now() { return Date.now(); }
 
 // Imports from the Wasm binary.
@@ -5786,6 +5831,7 @@ var _mrb_debug_next = Module['_mrb_debug_next'] = makeInvalidEarlyAccess('_mrb_d
 var _mrb_debug_get_callstack = Module['_mrb_debug_get_callstack'] = makeInvalidEarlyAccess('_mrb_debug_get_callstack');
 var _call_ruby_callback = Module['_call_ruby_callback'] = makeInvalidEarlyAccess('_call_ruby_callback');
 var _call_ruby_callback_oneshot = Module['_call_ruby_callback_oneshot'] = makeInvalidEarlyAccess('_call_ruby_callback_oneshot');
+var _call_ruby_callback_sync_event = Module['_call_ruby_callback_sync_event'] = makeInvalidEarlyAccess('_call_ruby_callback_sync_event');
 var _resume_promise_task = Module['_resume_promise_task'] = makeInvalidEarlyAccess('_resume_promise_task');
 var _resume_promise_error_task = Module['_resume_promise_error_task'] = makeInvalidEarlyAccess('_resume_promise_error_task');
 var _resume_binary_task = Module['_resume_binary_task'] = makeInvalidEarlyAccess('_resume_binary_task');
@@ -5834,6 +5880,7 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['mrb_debug_get_callstack'] != 'undefined', 'missing Wasm export: mrb_debug_get_callstack');
   assert(typeof wasmExports['call_ruby_callback'] != 'undefined', 'missing Wasm export: call_ruby_callback');
   assert(typeof wasmExports['call_ruby_callback_oneshot'] != 'undefined', 'missing Wasm export: call_ruby_callback_oneshot');
+  assert(typeof wasmExports['call_ruby_callback_sync_event'] != 'undefined', 'missing Wasm export: call_ruby_callback_sync_event');
   assert(typeof wasmExports['resume_promise_task'] != 'undefined', 'missing Wasm export: resume_promise_task');
   assert(typeof wasmExports['resume_promise_error_task'] != 'undefined', 'missing Wasm export: resume_promise_error_task');
   assert(typeof wasmExports['resume_binary_task'] != 'undefined', 'missing Wasm export: resume_binary_task');
@@ -5878,6 +5925,7 @@ function assignWasmExports(wasmExports) {
   _mrb_debug_get_callstack = Module['_mrb_debug_get_callstack'] = createExportWrapper('mrb_debug_get_callstack', wasmExports['mrb_debug_get_callstack'], 0);
   _call_ruby_callback = Module['_call_ruby_callback'] = createExportWrapper('call_ruby_callback', wasmExports['call_ruby_callback'], 2);
   _call_ruby_callback_oneshot = Module['_call_ruby_callback_oneshot'] = createExportWrapper('call_ruby_callback_oneshot', wasmExports['call_ruby_callback_oneshot'], 2);
+  _call_ruby_callback_sync_event = Module['_call_ruby_callback_sync_event'] = createExportWrapper('call_ruby_callback_sync_event', wasmExports['call_ruby_callback_sync_event'], 3);
   _resume_promise_task = Module['_resume_promise_task'] = createExportWrapper('resume_promise_task', wasmExports['resume_promise_task'], 4);
   _resume_promise_error_task = Module['_resume_promise_error_task'] = createExportWrapper('resume_promise_error_task', wasmExports['resume_promise_error_task'], 4);
   _resume_binary_task = Module['_resume_binary_task'] = createExportWrapper('resume_binary_task', wasmExports['resume_binary_task'], 5);
@@ -6072,6 +6120,8 @@ var wasmImports = {
   /** @export */
   invoke_ddd,
   /** @export */
+  invoke_ddj,
+  /** @export */
   invoke_ii,
   /** @export */
   invoke_iii,
@@ -6084,9 +6134,13 @@ var wasmImports = {
   /** @export */
   invoke_iijiiiiii,
   /** @export */
+  invoke_ijj,
+  /** @export */
   invoke_ji,
   /** @export */
   invoke_jii,
+  /** @export */
+  invoke_jjd,
   /** @export */
   invoke_vi,
   /** @export */
@@ -6475,6 +6529,29 @@ function invoke_viiji(index,a1,a2,a3,a4) {
   }
 }
 
+function invoke_jjd(index,a1,a2) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+    return 0n;
+  }
+}
+
+function invoke_ijj(index,a1,a2) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
 function invoke_viijj(index,a1,a2,a3,a4) {
   var sp = stackSave();
   try {
@@ -6487,6 +6564,17 @@ function invoke_viijj(index,a1,a2,a3,a4) {
 }
 
 function invoke_ddd(index,a1,a2) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_ddj(index,a1,a2) {
   var sp = stackSave();
   try {
     return getWasmTableEntry(index)(a1,a2);

@@ -672,7 +672,7 @@ class PicoRubyWasmMockSessionState {
 				this.pendingStartHtml = await this.inlineExternalCss(content, programPath);
 				
 				const lines = content.split('\n');
-				const scriptStartRegex = /<script\s+type=["'](?:text\/ruby|text\/picoruby)["'][^>]*>/i;
+				const scriptStartRegex = /<script\b[^>]*\btype=["'](?:text\/ruby|text\/picoruby)["'][^>]*>/i;
 				const scriptEndRegex = /<\/script>/i;
 
 				let insideScript = false;

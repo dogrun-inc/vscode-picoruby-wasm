@@ -262,10 +262,20 @@ class PicoRubyWasmMockSessionState {
 	private webviewReady = false;
 	/** Ruby source code waiting to be sent to the WebView runtime. */
 	private pendingStartCode: string | undefined;
-	/** 1-based breakpoint lines configured in VS Code. */
-	private configuredBreakpoints: number[] = [];
+	/** HTML content waiting to be sent to the WebView runtime for DOM rendering. */
+	private pendingStartHtml: string | undefined;
 	/** Pending requests for webview mapped by their request ID. */
 	private pendingRequests = new Map<string, (data: any) => void>();
+	/** 1-based line number where the script started. Used to adjust stack frames. */
+	private scriptStartLine = 1;
+	/** Pending breakpoints mapped by their normalized file path. */
+	private breakpointsByPath = new Map<string, number[]>();
+
+	/** Retrieves the breakpoints configured for the currently active program. */
+	private get configuredBreakpoints(): number[] {
+		const key = this.activeProgram ? path.normalize(this.activeProgram).toLowerCase() : '';
+		return this.breakpointsByPath.get(key) || [];
+	}
 
 	/**
 	 * @param onWebviewLog Callback that notifies the caller of log strings received from the WebView.
@@ -331,7 +341,11 @@ class PicoRubyWasmMockSessionState {
 	 */
 	reset(): Promise<void> {
 		this.pendingStartCode = undefined;
+		this.pendingStartHtml = undefined;
 		this.activeProgramLines = [];
+		this.breakpointsByPath.clear();
+		this.scriptStartLine = 1;
+		this.currentLine = 1;
 		this.pendingRequests.clear();
 		this.disposeWebviewPanel();
 		return this.runtimeClient.stop();
@@ -400,16 +414,22 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
-	 * Updates configured breakpoints and forwards them to WebView runtime when ready.
+     * Updates configured breakpoints and forwards them to WebView runtime when ready.
 	 *
+	 * @param sourcePath The path of the source file for which breakpoints are being updated.
 	 * @param lines 1-based line numbers.
-	 */
-	updateBreakpoints(lines: number[]): void {
-		this.configuredBreakpoints = Array.from(
-			new Set(lines.filter((line) => Number.isInteger(line) && line > 0))
-		).sort((left, right) => left - right);
-		this.postBreakpointsIfReady();
-	}
+     */
+    updateBreakpoints(sourcePath: string | undefined, lines: number[]): void {
+		const key = path.normalize(sourcePath ?? this.activeProgram).toLowerCase();
+        const validLines = Array.from(
+            new Set(lines.filter((line) => Number.isInteger(line) && line > 0))
+        ).sort((left, right) => left - right);
+
+        // Save the valid lines for the given source path
+        this.breakpointsByPath.set(key, validLines);
+
+        this.postBreakpointsIfReady();
+    }
 
 	/**
 	 * Resolves source lines used to validate breakpoint positions.
@@ -462,6 +482,35 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
+	 * Injects binding.irb into the configured Ruby source lines.
+	 *
+	 * @param sourceCode Ruby source code.
+	 * @param breakpoints 1-based line numbers from VS Code (HTML line numbers).
+	 * @returns Ruby source code with debugger bindings injected.
+	 */
+	injectBindingIrb(sourceCode: string, breakpoints: number[]): string {
+		const lines = sourceCode.split('\n');
+		const offset = this.scriptStartLine - 1;
+
+		const rubyBreakpoints = new Set(
+			breakpoints
+				.map((htmlLine) => htmlLine - offset)
+				.filter((line) => Number.isInteger(line) && line > 0)
+		);
+
+		for (let index = 0; index < lines.length; index += 1) {
+			const lineNumber = index + 1; // 1-based Ruby line number corresponding to the current index
+			if (!rubyBreakpoints.has(lineNumber) || !this.isInjectableBreakpointLine(lineNumber, lines)) {
+				continue;
+			}
+
+			lines[index] = `binding.irb; ${lines[index]}`;
+		}
+
+		return lines.join('\n');
+	}
+
+	/**
 	 * Disposes the current WebView panel and clears its reference.
 	 */
 	private disposeWebviewPanel(): void {
@@ -508,11 +557,14 @@ class PicoRubyWasmMockSessionState {
 					receivedMessage.reason === 'breakpoint' || receivedMessage.reason === 'entry'
 						? receivedMessage.reason
 						: 'breakpoint';
-				const line =
+				let line =
 					typeof receivedMessage.line === 'number' && Number.isInteger(receivedMessage.line) && receivedMessage.line > 0
 						? receivedMessage.line
 						: undefined;
+						
+				// Adjust the line number to html file line number.
 				if (line !== undefined) {
+					line = line + (this.scriptStartLine - 1);
 					this.currentLine = line;
 				}
 				this.onRuntimeStopped?.(reason, line);
@@ -578,11 +630,15 @@ class PicoRubyWasmMockSessionState {
 			return;
 		}
 
-		const code = this.pendingStartCode;
+		const code = this.injectBindingIrb(this.pendingStartCode, this.configuredBreakpoints);
+		const html = this.pendingStartHtml;
 		this.pendingStartCode = undefined;
+		this.pendingStartHtml = undefined;
+
 		void this.webviewPanel.webview.postMessage({
 			type: 'start',
 			code,
+			html,
 			breakpoints: this.configuredBreakpoints
 		});
 	}
@@ -603,13 +659,50 @@ class PicoRubyWasmMockSessionState {
 
 	/**
 	 * Reads the target program source from disk and returns UTF-8 text.
+	 * If it's an HTML file, extracts the content of <script type="text/ruby">.
 	 *
 	 * @param programPath Resolved program file path.
 	 * @returns Source text. Empty string is returned when the file cannot be read.
 	 */
 	private async readProgramSource(programPath: string): Promise<string> {
 		try {
-			return await readFile(programPath, 'utf8');
+			const content = await readFile(programPath, 'utf8');
+			
+			if (programPath.toLowerCase().endsWith('.html') || programPath.toLowerCase().endsWith('.htm')) {
+				this.pendingStartHtml = await this.inlineExternalCss(content, programPath);
+				
+				const lines = content.split('\n');
+				const scriptStartRegex = /<script\b[^>]*\btype=["'](?:text\/ruby|text\/picoruby)["'][^>]*>/i;
+				const scriptEndRegex = /<\/script>/i;
+
+				let insideScript = false;
+				let extractedLines: string[] = [];
+				this.scriptStartLine = 1;
+
+				for (let i = 0; i < lines.length; i++) {
+					if (!insideScript) {
+						if (scriptStartRegex.test(lines[i])) {
+							insideScript = true;
+							this.scriptStartLine = i + 2; // 0-based index + 1 (next line) + 1 (1-based line number)
+						}
+					} else {
+						if (scriptEndRegex.test(lines[i])) {
+							break;
+						}
+						extractedLines.push(lines[i]);
+					}
+				}
+
+				if (extractedLines.length === 0) {
+					this.onWebviewLog?.(`No PicoRuby script found in ${programPath}`);
+					return '';
+				}
+				return extractedLines.join('\n');
+			}
+
+			this.scriptStartLine = 1; // if it's .rb files and so on, it is always 1.
+			this.pendingStartHtml = undefined;
+			return content;
 		} catch (error: unknown) {
 			const message = error instanceof Error ? error.message : String(error);
 			this.onWebviewLog?.(`Failed to read program source: ${programPath} (${message})`);
@@ -804,6 +897,32 @@ class PicoRubyWasmMockSessionState {
 			void this.webviewPanel.webview.postMessage(message);
 		}
 	}
+
+	/**
+     * Resolves local <link rel="stylesheet" href="..."> files and inlines them into <style> tags.
+     */
+    private async inlineExternalCss(htmlContent: string, htmlPath: string): Promise<string> {
+        const htmlDir = path.dirname(htmlPath);
+        const linkRegex = /<link\s+[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>|<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["']stylesheet["'][^>]*>/gi;
+
+        let resolvedHtml = htmlContent;
+        let match: RegExpExecArray | null;
+
+        while ((match = linkRegex.exec(htmlContent)) !== null) {
+            const cssHref = match[1] || match[2];
+			if (cssHref && !cssHref.startsWith('//') && !/^[a-z][a-z\d+.-]*:/i.test(cssHref)) {
+                try {
+                    const cssPath = path.resolve(htmlDir, cssHref);
+                    const cssContent = await readFile(cssPath, 'utf8');
+					const safeCssContent = cssContent.replace(/<\/style/gi, '<\\/style');
+					resolvedHtml = resolvedHtml.replace(match[0], `<style>\n/* inlined: ${cssHref} */\n${safeCssContent}\n</style>`);
+                } catch (error) {
+                    this.onWebviewLog?.(`Failed to inline CSS file: ${cssHref}`);
+                }
+            }
+        }
+        return resolvedHtml;
+    }
 }
 
 /**
@@ -905,11 +1024,12 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 * @param args Incoming breakpoint payload.
 	 */
 	protected setBreakpointsRequest(
-		response: any,
-		args: { source?: { path?: string }; breakpoints?: Array<{ line?: number; column?: number }> }
-	): void {
-		const requested = Array.isArray(args?.breakpoints) ? args.breakpoints : [];
-		const sourcePath = typeof args?.source?.path === 'string' ? args.source.path : undefined;
+        response: any,
+        args: { source?: { path?: string }; breakpoints?: Array<{ line?: number; column?: number }> }
+    ): void {
+        const requested = Array.isArray(args?.breakpoints) ? args.breakpoints : [];
+        const sourcePath = typeof args?.source?.path === 'string' ? args.source.path : undefined;
+
 		const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
 		const acceptedLines = requested
 			.map((bp) => bp?.line)
@@ -920,20 +1040,22 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 					line > 0 &&
 					this.state.isInjectableBreakpointLine(line, validationLines)
 			);
-		this.state.updateBreakpoints(acceptedLines);
-		const acceptedLineSet = new Set(acceptedLines);
-		response.body = {
-			breakpoints: requested.map((bp) => ({
+
+        this.state.updateBreakpoints(sourcePath, acceptedLines);
+
+        const acceptedLineSet = new Set(acceptedLines);
+        response.body = {
+            breakpoints: requested.map((bp) => ({
 				verified:
 					typeof bp?.line === 'number' && Number.isInteger(bp.line)
 						? acceptedLineSet.has(bp.line)
 						: false,
-				line: typeof bp?.line === 'number' ? bp.line : undefined,
-				column: typeof bp?.column === 'number' ? bp.column : undefined
-			}))
-		};
-		this.sendResponse(response);
-	}
+                line: typeof bp?.line === 'number' ? bp.line : undefined,
+                column: typeof bp?.column === 'number' ? bp.column : undefined
+            }))
+        };
+        this.sendResponse(response);
+    }
 
 	/**
 	 * Handles DAP threads requests.
@@ -1189,13 +1311,14 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				});
 				return;
 			case 'setBreakpoints': {
-				const requested = Array.isArray(message.arguments?.breakpoints)
-					? message.arguments.breakpoints
-					: [];
-				const sourcePath =
-					typeof message.arguments?.source?.path === 'string'
-						? message.arguments.source.path
-						: undefined;
+                const requested = Array.isArray(message.arguments?.breakpoints)
+                    ? message.arguments.breakpoints
+                    : [];
+                const sourcePath =
+                    typeof message.arguments?.source?.path === 'string'
+                        ? message.arguments.source.path
+                        : undefined;
+
 				const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
 				const acceptedLines = requested
 					.map((bp: { line?: number; column?: number }) => bp?.line)
@@ -1206,27 +1329,29 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 							line > 0 &&
 							this.state.isInjectableBreakpointLine(line, validationLines)
 					);
-				this.state.updateBreakpoints(acceptedLines);
-				const acceptedLineSet = new Set(acceptedLines);
-				this.emit({
-					type: 'response',
-					seq: this.nextMessageSeq(),
-					request_seq: message.seq,
-					success: true,
-					command: 'setBreakpoints',
-					body: {
-						breakpoints: requested.map((bp: { line?: number; column?: number }) => ({
+
+                this.state.updateBreakpoints(sourcePath, acceptedLines);
+
+                const acceptedLineSet = new Set(acceptedLines);
+                this.emit({
+                    type: 'response',
+                    seq: this.nextMessageSeq(),
+                    request_seq: message.seq,
+                    success: true,
+                    command: 'setBreakpoints',
+                    body: {
+                        breakpoints: requested.map((bp: { line?: number; column?: number }) => ({
 							verified:
 								typeof bp?.line === 'number' && Number.isInteger(bp.line)
 									? acceptedLineSet.has(bp.line)
 									: false,
-							line: typeof bp?.line === 'number' ? bp.line : undefined,
-							column: typeof bp?.column === 'number' ? bp.column : undefined
-						}))
-					}
-				});
-				return;
-			}
+                            line: typeof bp?.line === 'number' ? bp.line : undefined,
+                            column: typeof bp?.column === 'number' ? bp.column : undefined
+                        }))
+                    }
+                });
+                return;
+            }
 			case 'threads':
 				this.emit({
 					type: 'response',

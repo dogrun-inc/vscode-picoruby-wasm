@@ -2,7 +2,7 @@ const vscode = typeof acquireVsCodeApi === 'function'
 	? acquireVsCodeApi()
 	: { postMessage: () => {} };
 
-const IDLE_TIMEOUT_MS = 3000;
+const IDLE_TIMEOUT_MS = 10000;
 
 /**
  * Converts a console argument into a loggable string.
@@ -135,34 +135,6 @@ const moduleReady = loadPicorubyModule()
 			lastProgressTime: performance.now()
 		};
 		instance.picorubyDebugState = runtimeState;
-
-		const injectBindingIrb = (sourceCode, breakpoints) => {
-			const normalizedBreakpoints = new Set(
-				(Array.isArray(breakpoints) ? breakpoints : [])
-					.filter((line) => Number.isInteger(line) && line > 0)
-			);
-			const lines = sourceCode.split('\n');
-
-			for (let index = 0; index < lines.length; index += 1) {
-				const lineNumber = index + 1;
-				if (!normalizedBreakpoints.has(lineNumber)) {
-					continue;
-				}
-
-				const trimmed = lines[index].trimStart();
-				if (trimmed.length === 0 || trimmed.startsWith('#')) {
-					continue;
-				}
-
-				if (/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed)) {
-					continue;
-				}
-
-				lines[index] = `binding.irb; ${lines[index]}`;
-			}
-
-			return lines.join('\n');
-		};
 
 		const TERMINAL_MODES = new Set(['terminated', 'finished', 'exited', 'completed', 'done']);
 
@@ -342,7 +314,6 @@ const moduleReady = loadPicorubyModule()
 		startDebugPolling();
 		console.log('PicoRuby WASM in WebView Loaded!');
 		vscode.postMessage({ type: 'ready' });
-		instance.picorubyInjectBreakpoints = injectBindingIrb;
 		return instance;
 	})
 	.catch((error) => {
@@ -535,6 +506,41 @@ window.addEventListener('message', async (event) => {
 
 	console.log('[debugger] webview message type=start');
 
+	if (data.html) {
+        try {
+            console.log('[debugger] Rendering HTML DOM with styles...');
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(data.html, 'text/html');
+
+            // <script type="text/ruby"> タグをカット
+            const rubyScripts = doc.querySelectorAll('script[type="text/ruby"], script[type="text/picoruby"]');
+            rubyScripts.forEach((script) => script.remove());
+
+			doc.querySelectorAll('[href]').forEach((element) => {
+				if (/^\s*javascript\s*:/i.test(element.getAttribute('href') || '')) {
+					element.removeAttribute('href');
+				}
+			});
+
+            // 以前追加されたインラインスタイルがあればクリア（再実行時の重複防止）
+            document.querySelectorAll('style[data-runtime-injected="true"]').forEach((s) => s.remove());
+
+            // HTML内のすべての <style> タグ（<head>・<body>問わず）の内容をアクティブな document.head へ確実に注入
+            const styleElements = doc.querySelectorAll('style');
+            styleElements.forEach((styleTag) => {
+                const newStyle = document.createElement('style');
+                newStyle.setAttribute('data-runtime-injected', 'true');
+                newStyle.textContent = styleTag.textContent;
+                document.head.appendChild(newStyle);
+            });
+
+            // body 内の HTML 要素を Webview 画面に描画
+            document.body.innerHTML = doc.body.innerHTML;
+        } catch (e) {
+            console.error('Failed to render HTML content', e);
+        }
+    }
+
 	const instance = await moduleReady;
 	const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
 	const runtimeBreakpoints = Array.isArray(data.breakpoints)
@@ -547,14 +553,10 @@ window.addEventListener('message', async (event) => {
 	instance.picorubyDebugState.lastProgressTime = performance.now();
 	instance.picorubyDebugState.breakpoints = runtimeBreakpoints;
 
-	const patchedCode = typeof instance.picorubyInjectBreakpoints === 'function'
-		? instance.picorubyInjectBreakpoints(receivedCode, runtimeBreakpoints)
-		: receivedCode;
-
 	console.log('Received start command from VS Code.');
-	console.log(patchedCode);
+	console.log(receivedCode);
 	try {
-		instance.ccall('picorb_create_task', 'number', ['string'], [patchedCode]);
+		instance.ccall('picorb_create_task', 'number', ['string'], [receivedCode]);
 		instance.picorubyDebugState.sessionStarted = true;
 		if (typeof instance.picorubyResume === 'function') {
 			instance.picorubyResume();

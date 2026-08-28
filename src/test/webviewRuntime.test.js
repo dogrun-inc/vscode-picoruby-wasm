@@ -39,41 +39,6 @@ describe('webviewRuntime.js Test Suite', () => {
 		});
 	});
 
-	describe('Breakpoint Injection Logic', () => {
-		test('should inject binding.irb on target lines, ignoring comments and keywords', () => {
-			const injectBindingIrb = (sourceCode, breakpoints) => {
-				const normalizedBreakpoints = new Set(breakpoints.filter((l) => Number.isInteger(l) && l > 0));
-				const lines = sourceCode.split('\n');
-
-				for (let index = 0; index < lines.length; index += 1) {
-					const lineNumber = index + 1;
-					if (!normalizedBreakpoints.has(lineNumber)) continue;
-
-					const trimmed = lines[index].trimStart();
-					if (trimmed.length === 0 || trimmed.startsWith('#')) continue;
-					if (/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed)) continue;
-
-					lines[index] = `binding.irb; ${lines[index]}`;
-				}
-				return lines.join('\n');
-			};
-
-			const sampleCode = [
-				'puts "Line 1"',       // Line 1: 対象
-				'# Comment line',      // Line 2: スキップ（コメント）
-				'else',                // Line 3: スキップ（制御構文）
-				'x = 10'               // Line 4: 対象
-			].join('\n');
-
-			const result = injectBindingIrb(sampleCode, [1, 2, 3, 4]);
-
-			expect(result).toContain('binding.irb; puts "Line 1"');
-			expect(result).toContain('# Comment line');
-			expect(result).not.toContain('binding.irb; else');
-			expect(result).toContain('binding.irb; x = 10');
-		});
-	});
-
 	describe('Status Polling & Notifications', () => {
 		test('should parse paused status JSON correctly', () => {
 			const statusJson = JSON.stringify({ mode: 'paused', line: 9, pause_id: 1 });
@@ -129,6 +94,22 @@ describe('webviewRuntime.js Test Suite', () => {
 			});
 			window.dispatchEvent(event);
 			await Promise.resolve();
+		});
+
+		test('should remove javascript hrefs while rendering HTML content', async () => {
+			document.body.innerHTML = '';
+			const event = new MessageEvent('message', {
+				data: {
+					type: 'start',
+					html: '<a id="unsafe" href="javascript:alert(1)">Unsafe</a><a id="safe" href="https://example.com">Safe</a>',
+					code: ''
+				}
+			});
+			window.dispatchEvent(event);
+			await flushAsyncEvents();
+
+			expect(document.querySelector('#unsafe').getAttribute('href')).toBeNull();
+			expect(document.querySelector('#safe').getAttribute('href')).toBe('https://example.com');
 		});
 
 		test('should respond to getLocals with echoed requestId and object payload fallback', async () => {

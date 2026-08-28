@@ -1,4 +1,7 @@
 import * as assert from 'assert';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import { createPicoRubyWasmInlineDebugAdapter } from '../debug/session';
 
@@ -17,14 +20,17 @@ function collectMessages(command: string, args?: any): DebugMessage[] {
 		messages.push(message as DebugMessage);
 	});
 
-	adapter.handleMessage({
-		type: 'request',
-		seq: 1,
-		command,
-		arguments: args
-	});
-
-	subscription.dispose();
+	try {
+		adapter.handleMessage({
+			type: 'request',
+			seq: 1,
+			command,
+			arguments: args
+		});
+	} finally {
+		subscription.dispose();
+		adapter.dispose();
+	}
 	return messages;
 }
 
@@ -86,6 +92,148 @@ suite('debug session adapter', () => {
 		});
 		assert.strictEqual(messages[1].type, 'event');
 		assert.strictEqual(messages[1].event, 'initialized');
+	});
+
+	test('injects binding.irb only on injectable breakpoint lines', () => {
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+		const sourceCode = [
+			'puts "Line 1"',
+			'# Comment line',
+			'else',
+			'x = 10'
+		].join('\n');
+
+		try {
+			const result = adapter.state.injectBindingIrb(sourceCode, [1, 2, 3, 4]);
+
+			assert.ok(result.includes('binding.irb; puts "Line 1"'));
+			assert.ok(result.includes('# Comment line'));
+			assert.ok(!result.includes('binding.irb; else'));
+			assert.ok(result.includes('binding.irb; x = 10'));
+		} finally {
+			adapter.dispose();
+		}
+	});
+
+	test('extracts PicoRuby code when script type is not the first attribute', async () => {
+		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-html-'));
+		const sourcePath = path.join(directory, 'program.html');
+		writeFileSync(sourcePath, '<script id="main" type="text/ruby">\nputs "hello"\n</script>');
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+
+		try {
+			assert.strictEqual(await adapter.state.readProgramSource(sourcePath), 'puts "hello"');
+		} finally {
+			adapter.dispose();
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test('returns an empty program when HTML has no PicoRuby script', async () => {
+		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-html-'));
+		const sourcePath = path.join(directory, 'program.html');
+		writeFileSync(sourcePath, '<html><body><p>No Ruby script</p></body></html>');
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+
+		try {
+			assert.strictEqual(await adapter.state.readProgramSource(sourcePath), '');
+		} finally {
+			adapter.dispose();
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test('extracts only the first PicoRuby script from HTML', async () => {
+		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-html-'));
+		const sourcePath = path.join(directory, 'program.html');
+		writeFileSync(sourcePath, '<script type="text/ruby">\nputs "first"\n</script>\n<script type="text/ruby">\nputs "second"\n</script>');
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+
+		try {
+			const source = await adapter.state.readProgramSource(sourcePath);
+			assert.ok(source.includes('puts "first"'));
+			assert.ok(!source.includes('puts "second"'));
+		} finally {
+			adapter.dispose();
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test('inlines local CSS and preserves links when CSS cannot be read', async () => {
+		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-html-'));
+		const cssPath = path.join(directory, 'style.css');
+		const sourcePath = path.join(directory, 'program.html');
+		writeFileSync(cssPath, 'body { color: red; }');
+		writeFileSync(sourcePath, '<link rel="stylesheet" href="style.css">\n<script type="text/ruby">puts "hello"</script>');
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+
+		try {
+			await adapter.state.readProgramSource(sourcePath);
+			assert.ok(adapter.state.pendingStartHtml.includes('body { color: red; }'));
+
+			writeFileSync(cssPath, 'body { color: red; } </style>');
+			const unsafeCssPath = path.join(directory, 'unsafe.html');
+			writeFileSync(unsafeCssPath, '<link rel="stylesheet" href="style.css">\n<script type="text/ruby">puts "hello"</script>');
+			await adapter.state.readProgramSource(unsafeCssPath);
+			assert.ok(adapter.state.pendingStartHtml.includes('<\\/style>'));
+
+			const invalidUrlPath = path.join(directory, 'invalid-url.html');
+			writeFileSync(invalidUrlPath, '<link rel="stylesheet" href="data:text/css,body{}">\n<script type="text/ruby">puts "hello"</script>');
+			await adapter.state.readProgramSource(invalidUrlPath);
+			assert.ok(adapter.state.pendingStartHtml.includes('href="data:text/css,body{}"'));
+
+			const missingPath = path.join(directory, 'missing.html');
+			writeFileSync(missingPath, '<link rel="stylesheet" href="missing.css">\n<script type="text/ruby">puts "hello"</script>');
+			const messages: DebugMessage[] = [];
+			const subscription = adapter.onDidSendMessage((message: any) => messages.push(message));
+
+			try {
+				await adapter.state.readProgramSource(missingPath);
+			} finally {
+				subscription.dispose();
+			}
+
+			assert.ok(adapter.state.pendingStartHtml.includes('<link rel="stylesheet" href="missing.css">'));
+			assert.ok(messages.some((message) => message.type === 'event' && message.event === 'output' && message.body?.output.includes('Failed to inline CSS file')));
+		} finally {
+			adapter.dispose();
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test('marks only injectable breakpoint lines as verified', () => {
+		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-debug-'));
+		const sourcePath = path.join(directory, 'program.rb');
+		writeFileSync(sourcePath, 'puts "Line 1"\n# Comment line\nelse\nx = 10\n');
+
+		try {
+			const messages = collectMessages('setBreakpoints', {
+				source: { path: sourcePath },
+				breakpoints: [{ line: 1 }, { line: 2 }, { line: 3 }, { line: 4 }]
+			});
+			const response = messages.find((message) => message.type === 'response' && message.command === 'setBreakpoints');
+
+			assert.deepStrictEqual(response?.body?.breakpoints.map((breakpoint: { verified: boolean }) => breakpoint.verified), [
+				true,
+				false,
+				false,
+				true
+			]);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test('uses the active program as the breakpoint key when source path is omitted', () => {
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+
+		try {
+			adapter.state.updateBreakpoints(undefined, [3]);
+
+			assert.deepStrictEqual(adapter.state.configuredBreakpoints, [3]);
+		} finally {
+			adapter.dispose();
+		}
 	});
 
 	test('continue, next, and stepIn requests return success responses', () => {
@@ -168,6 +316,19 @@ suite('debug session adapter', () => {
 			messages.map((message) => message.type === 'event' ? message.event : message.command),
 			['terminated', 'terminate', 'disconnect']
 		);
+	});
+
+	test('reset clears breakpoints and source line state', async () => {
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+		adapter.state.breakpointsByPath.set('program.html', [12]);
+		adapter.state.scriptStartLine = 8;
+		adapter.state.currentLine = 12;
+
+		await adapter.state.reset();
+
+		assert.strictEqual(adapter.state.breakpointsByPath.size, 0);
+		assert.strictEqual(adapter.state.scriptStartLine, 1);
+		assert.strictEqual(adapter.state.currentLine, 1);
 	});
 
 	test('scopes returns Locals and Globals entries', async () => {

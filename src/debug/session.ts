@@ -1030,17 +1030,26 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
         const requested = Array.isArray(args?.breakpoints) ? args.breakpoints : [];
         const sourcePath = typeof args?.source?.path === 'string' ? args.source.path : undefined;
 
-        const acceptedLines = requested
-            .map((bp) => bp?.line)
-            .filter((line): line is number => typeof line === 'number' && Number.isInteger(line) && line > 0);
+		const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
+		const acceptedLines = requested
+			.map((bp) => bp?.line)
+			.filter(
+				(line): line is number =>
+					typeof line === 'number' &&
+					Number.isInteger(line) &&
+					line > 0 &&
+					this.state.isInjectableBreakpointLine(line, validationLines)
+			);
 
-        // 🌟 sourcePath を渡すように修正
         this.state.updateBreakpoints(sourcePath, acceptedLines);
 
         const acceptedLineSet = new Set(acceptedLines);
         response.body = {
             breakpoints: requested.map((bp) => ({
-                verified: typeof bp?.line === 'number' && Number.isInteger(bp.line) ? true : false,
+				verified:
+					typeof bp?.line === 'number' && Number.isInteger(bp.line)
+						? acceptedLineSet.has(bp.line)
+						: false,
                 line: typeof bp?.line === 'number' ? bp.line : undefined,
                 column: typeof bp?.column === 'number' ? bp.column : undefined
             }))
@@ -1310,9 +1319,16 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
                         ? message.arguments.source.path
                         : undefined;
 
-                const acceptedLines = requested
-                    .map((bp: { line?: number; column?: number }) => bp?.line)
-                    .filter((line: unknown): line is number => typeof line === 'number' && Number.isInteger(line) && line > 0);
+				const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
+				const acceptedLines = requested
+					.map((bp: { line?: number; column?: number }) => bp?.line)
+					.filter(
+						(line: unknown): line is number =>
+							typeof line === 'number' &&
+							Number.isInteger(line) &&
+							line > 0 &&
+							this.state.isInjectableBreakpointLine(line, validationLines)
+					);
 
                 this.state.updateBreakpoints(sourcePath, acceptedLines);
 
@@ -1325,7 +1341,10 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
                     command: 'setBreakpoints',
                     body: {
                         breakpoints: requested.map((bp: { line?: number; column?: number }) => ({
-                            verified: typeof bp?.line === 'number' && Number.isInteger(bp.line) ? true : false,
+							verified:
+								typeof bp?.line === 'number' && Number.isInteger(bp.line)
+									? acceptedLineSet.has(bp.line)
+									: false,
                             line: typeof bp?.line === 'number' ? bp.line : undefined,
                             column: typeof bp?.column === 'number' ? bp.column : undefined
                         }))

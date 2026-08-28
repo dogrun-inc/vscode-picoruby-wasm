@@ -1,4 +1,7 @@
 import * as assert from 'assert';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import { createPicoRubyWasmInlineDebugAdapter } from '../debug/session';
 
@@ -103,6 +106,29 @@ suite('debug session adapter', () => {
 		assert.ok(result.includes('# Comment line'));
 		assert.ok(!result.includes('binding.irb; else'));
 		assert.ok(result.includes('binding.irb; x = 10'));
+	});
+
+	test('marks only injectable breakpoint lines as verified', () => {
+		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-debug-'));
+		const sourcePath = path.join(directory, 'program.rb');
+		writeFileSync(sourcePath, 'puts "Line 1"\n# Comment line\nelse\nx = 10\n');
+
+		try {
+			const messages = collectMessages('setBreakpoints', {
+				source: { path: sourcePath },
+				breakpoints: [{ line: 1 }, { line: 2 }, { line: 3 }, { line: 4 }]
+			});
+			const response = messages.find((message) => message.type === 'response' && message.command === 'setBreakpoints');
+
+			assert.deepStrictEqual(response?.body?.breakpoints.map((breakpoint: { verified: boolean }) => breakpoint.verified), [
+				true,
+				false,
+				false,
+				true
+			]);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
 	});
 
 	test('continue, next, and stepIn requests return success responses', () => {

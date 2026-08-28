@@ -516,6 +516,12 @@ window.addEventListener('message', async (event) => {
             const rubyScripts = doc.querySelectorAll('script[type="text/ruby"], script[type="text/picoruby"]');
             rubyScripts.forEach((script) => script.remove());
 
+			doc.querySelectorAll('[href]').forEach((element) => {
+				if (/^\s*javascript\s*:/i.test(element.getAttribute('href') || '')) {
+					element.removeAttribute('href');
+				}
+			});
+
             // 以前追加されたインラインスタイルがあればクリア（再実行時の重複防止）
             document.querySelectorAll('style[data-runtime-injected="true"]').forEach((s) => s.remove());
 

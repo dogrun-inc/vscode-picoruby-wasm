@@ -96,6 +96,22 @@ describe('webviewRuntime.js Test Suite', () => {
 			await Promise.resolve();
 		});
 
+		test('should remove javascript hrefs while rendering HTML content', async () => {
+			document.body.innerHTML = '';
+			const event = new MessageEvent('message', {
+				data: {
+					type: 'start',
+					html: '<a id="unsafe" href="javascript:alert(1)">Unsafe</a><a id="safe" href="https://example.com">Safe</a>',
+					code: ''
+				}
+			});
+			window.dispatchEvent(event);
+			await flushAsyncEvents();
+
+			expect(document.querySelector('#unsafe').getAttribute('href')).toBeNull();
+			expect(document.querySelector('#safe').getAttribute('href')).toBe('https://example.com');
+		});
+
 		test('should respond to getLocals with echoed requestId and object payload fallback', async () => {
 			const event = new MessageEvent('message', {
 				data: { type: 'getLocals', requestId: 'req-locals-1' }

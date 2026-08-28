@@ -910,12 +910,12 @@ class PicoRubyWasmMockSessionState {
 
         while ((match = linkRegex.exec(htmlContent)) !== null) {
             const cssHref = match[1] || match[2];
-            // HTTP(S) 等の外部URL以外のローカル相対パスを対象とする
-            if (cssHref && !cssHref.startsWith('http://') && !cssHref.startsWith('https://') && !cssHref.startsWith('//')) {
+			if (cssHref && !cssHref.startsWith('//') && !/^[a-z][a-z\d+.-]*:/i.test(cssHref)) {
                 try {
                     const cssPath = path.resolve(htmlDir, cssHref);
                     const cssContent = await readFile(cssPath, 'utf8');
-                    resolvedHtml = resolvedHtml.replace(match[0], `<style>\n/* inlined: ${cssHref} */\n${cssContent}\n</style>`);
+					const safeCssContent = cssContent.replace(/<\/style/gi, '<\\/style');
+					resolvedHtml = resolvedHtml.replace(match[0], `<style>\n/* inlined: ${cssHref} */\n${safeCssContent}\n</style>`);
                 } catch (error) {
                     this.onWebviewLog?.(`Failed to inline CSS file: ${cssHref}`);
                 }

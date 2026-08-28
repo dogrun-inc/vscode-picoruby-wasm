@@ -164,6 +164,17 @@ suite('debug session adapter', () => {
 			await adapter.state.readProgramSource(sourcePath);
 			assert.ok(adapter.state.pendingStartHtml.includes('body { color: red; }'));
 
+			writeFileSync(cssPath, 'body { color: red; } </style>');
+			const unsafeCssPath = path.join(directory, 'unsafe.html');
+			writeFileSync(unsafeCssPath, '<link rel="stylesheet" href="style.css">\n<script type="text/ruby">puts "hello"</script>');
+			await adapter.state.readProgramSource(unsafeCssPath);
+			assert.ok(adapter.state.pendingStartHtml.includes('<\\/style>'));
+
+			const invalidUrlPath = path.join(directory, 'invalid-url.html');
+			writeFileSync(invalidUrlPath, '<link rel="stylesheet" href="data:text/css,body{}">\n<script type="text/ruby">puts "hello"</script>');
+			await adapter.state.readProgramSource(invalidUrlPath);
+			assert.ok(adapter.state.pendingStartHtml.includes('href="data:text/css,body{}"'));
+
 			const missingPath = path.join(directory, 'missing.html');
 			writeFileSync(missingPath, '<link rel="stylesheet" href="missing.css">\n<script type="text/ruby">puts "hello"</script>');
 			const messages: DebugMessage[] = [];

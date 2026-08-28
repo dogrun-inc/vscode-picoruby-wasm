@@ -420,7 +420,7 @@ class PicoRubyWasmMockSessionState {
 	 * @param lines 1-based line numbers.
      */
     updateBreakpoints(sourcePath: string | undefined, lines: number[]): void {
-        const key = sourcePath ? path.normalize(sourcePath).toLowerCase() : 'unknown';
+		const key = path.normalize(sourcePath ?? this.activeProgram).toLowerCase();
         const validLines = Array.from(
             new Set(lines.filter((line) => Number.isInteger(line) && line > 0))
         ).sort((left, right) => left - right);

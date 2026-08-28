@@ -217,6 +217,18 @@ suite('debug session adapter', () => {
 		}
 	});
 
+	test('uses the active program as the breakpoint key when source path is omitted', () => {
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+
+		try {
+			adapter.state.updateBreakpoints(undefined, [3]);
+
+			assert.deepStrictEqual(adapter.state.configuredBreakpoints, [3]);
+		} finally {
+			adapter.dispose();
+		}
+	});
+
 	test('continue, next, and stepIn requests return success responses', () => {
 		const continueMessages = collectMessages('continue');
 		assert.strictEqual(continueMessages.length, 2);

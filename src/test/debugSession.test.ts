@@ -187,6 +187,19 @@ suite('debug session adapter', () => {
 		);
 	});
 
+	test('reset clears breakpoints and source line state', async () => {
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+		adapter.state.breakpointsByPath.set('program.html', [12]);
+		adapter.state.scriptStartLine = 8;
+		adapter.state.currentLine = 12;
+
+		await adapter.state.reset();
+
+		assert.strictEqual(adapter.state.breakpointsByPath.size, 0);
+		assert.strictEqual(adapter.state.scriptStartLine, 1);
+		assert.strictEqual(adapter.state.currentLine, 1);
+	});
+
 	test('scopes returns Locals and Globals entries', async () => {
 		const messages = await collectMessagesAsync('scopes', { frameId: 1 });
 		const response = messages.find((message) => message.type === 'response' && message.command === 'scopes');

@@ -343,6 +343,9 @@ class PicoRubyWasmMockSessionState {
 		this.pendingStartCode = undefined;
 		this.pendingStartHtml = undefined;
 		this.activeProgramLines = [];
+		this.breakpointsByPath.clear();
+		this.scriptStartLine = 1;
+		this.currentLine = 1;
 		this.pendingRequests.clear();
 		this.disposeWebviewPanel();
 		return this.runtimeClient.stop();

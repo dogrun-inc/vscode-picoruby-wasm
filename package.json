@@ -3,6 +3,7 @@
   "displayName": "PicoRuby WASM",
   "description": "Syntax highlighting and code completion support for PicoRuby in VS Code",
   "version": "0.1.0",
+  "icon": "images/icon.png",
   "publisher": "dogrun-inc",
   "license": "MIT",
   "repository": {
@@ -29,6 +30,8 @@
   ],
   "activationEvents": [
     "onLanguage:picoruby",
+    "onDebugInitialConfigurations:picoruby-wasm",
+    "onDebugResolve:picoruby-wasm",
     "onCommand:picoruby.enable",
     "onCommand:picoruby.disable"
   ],
@@ -37,7 +40,10 @@
     "languages": [
       {
         "id": "picoruby",
-        "aliases": ["PicoRuby", "picoruby"],
+        "aliases": [
+          "PicoRuby",
+          "picoruby"
+        ],
         "extensions": [],
         "configuration": "./language-configuration.json"
       }
@@ -51,7 +57,10 @@
       {
         "scopeName": "text.html.picoruby.injection",
         "path": "./syntaxes/picoruby-in-html.tmLanguage.json",
-        "injectTo": ["text.html.basic", "text.html.derivative"],
+        "injectTo": [
+          "text.html.basic",
+          "text.html.derivative"
+        ],
         "embeddedLanguages": {
           "meta.embedded.block.picoruby": "picoruby"
         }
@@ -66,6 +75,53 @@
         "command": "picoruby.disable",
         "title": "Disable PicoRuby for this workspace (remove .rb mapping)"
       }
+    ],
+    "breakpoints": [
+      {
+        "language": "picoruby"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "picoruby-wasm",
+        "label": "PicoRuby WASM",
+        "languages": [
+          "picoruby"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the HTML entrypoint that the mock debugger should launch."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for the mock runtime."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments forwarded to the mock runtime."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "name": "Launch PicoRuby WASM",
+            "type": "picoruby-wasm",
+            "request": "launch",
+            "program": "./index.html",
+            "cwd": "${workspaceFolder}"
+          }
+        ]
+      }
     ]
   },
   "scripts": {
@@ -74,16 +130,23 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test:vscode": "vscode-test",
+    "test:webview": "jest src/test/webviewRuntime.test.js",
+    "test": "vscode-test && npm run test:webview"
+  },
+  "dependencies": {
+    "@vscode/debugadapter": "^1.68.0"
   },
   "devDependencies": {
-    "@types/vscode": "^1.120.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "typescript-eslint": "^8.56.1",
-    "eslint": "^9.39.3",
-    "typescript": "^5.9.3",
+    "@types/vscode": "^1.120.0",
     "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.39.3",
+    "jest": "^30.4.2",
+    "jest-environment-jsdom": "^30.4.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
   }
 }

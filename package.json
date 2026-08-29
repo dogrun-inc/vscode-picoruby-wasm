@@ -2,7 +2,7 @@
   "name": "picoruby-wasm",
   "displayName": "PicoRuby WASM",
   "description": "Syntax highlighting and code completion support for PicoRuby in VS Code",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "icon": "images/icon.png",
   "publisher": "dogrun-inc",
   "license": "MIT",

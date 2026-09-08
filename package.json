@@ -74,6 +74,10 @@
       {
         "command": "picoruby.disable",
         "title": "Disable PicoRuby for this workspace (remove .rb mapping)"
+      },
+      {
+        "command": "picoruby.exportSingleHtml",
+        "title": "PicoRuby: Export Single HTML"
       }
     ],
     "breakpoints": [

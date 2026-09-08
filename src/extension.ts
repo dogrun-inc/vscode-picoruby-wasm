@@ -3,6 +3,7 @@ import { enablePicoRuby, disablePicoRuby } from './language/workspaceAssociation
 import { registerPicoRubyCompletionProvider } from './completion/provider';
 import { registerPicoRubyWasmDebugging } from './debug/adapterFactory';
 import { setPicoRubyWasmExtensionContext } from './debug/session';
+import { exportPicoRubySingleHtml } from './exporter';
 
 export function activate(context: vscode.ExtensionContext) {
 	console.log('PicoRuby WASM extension is now active.');
@@ -11,6 +12,7 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('picoruby.enable', () => enablePicoRuby()),
 		vscode.commands.registerCommand('picoruby.disable', () => disablePicoRuby()),
+		vscode.commands.registerCommand('picoruby.exportSingleHtml', (uri?: vscode.Uri) => exportPicoRubySingleHtml(context, uri)),
 		registerPicoRubyCompletionProvider(),
 		registerPicoRubyWasmDebugging(context)
 	);

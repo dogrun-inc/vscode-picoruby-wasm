@@ -105,7 +105,10 @@ const loadPicorubyModule = () => {
 		return Promise.resolve({
 			default: async () => ({
 				ccall: () => {},
+				_mrb_tick_wasm: () => {},
+				_mrb_run_step: () => 0,
 				_mrb_debug_get_status: () => null,
+				FS: null,
 				picorubyDebugState: {}
 			})
 		});
@@ -113,6 +116,84 @@ const loadPicorubyModule = () => {
 
 	// ブラウザ (Webview) 環境では相対パスで picoruby.js を動的インポートする
 	return import('./picoruby.js');
+};
+
+const normalizeVfsPath = (relativePath) => {
+	if (typeof relativePath !== 'string') {
+		return null;
+	}
+
+	const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+	const segments = normalized.split('/').filter((segment) => segment.length > 0 && segment !== '.');
+	if (segments.length === 0 || segments.includes('..')) {
+		return null;
+	}
+
+	return segments.join('/');
+};
+
+const ensureVfsDirectory = (fs, directoryPath) => {
+	const segments = directoryPath.split('/').filter(Boolean);
+	let currentPath = '';
+
+	for (const segment of segments) {
+		currentPath += `/${segment}`;
+		try {
+			fs.mkdir(currentPath);
+		} catch {
+			// Existing directories are fine.
+		}
+	}
+};
+
+const writeVfsToRuntime = (instance, vfs) => {
+	if (!vfs || typeof vfs !== 'object') {
+		return;
+	}
+
+	const fs = instance?.FS;
+	if (!fs || typeof fs.writeFile !== 'function') {
+		console.log('[vfs] runtime FS is not available; skipped Ruby file mount');
+		return;
+	}
+
+	ensureVfsDirectory(fs, '/work');
+
+	let count = 0;
+	for (const [rawPath, content] of Object.entries(vfs)) {
+		const relativePath = normalizeVfsPath(rawPath);
+		if (!relativePath || typeof content !== 'string') {
+			continue;
+		}
+
+		const pathSegments = relativePath.split('/');
+		const fileName = pathSegments.pop();
+		if (!fileName) {
+			continue;
+		}
+
+		const directoryPath = `/work/${pathSegments.join('/')}`.replace(/\/$/, '');
+		ensureVfsDirectory(fs, directoryPath);
+		fs.writeFile(`${directoryPath}/${fileName}`, content, { encoding: 'utf8' });
+		count += 1;
+	}
+
+	if (typeof fs.chdir === 'function') {
+		fs.chdir('/work');
+	}
+
+	console.log(`[vfs] mounted ${count} Ruby file(s) under /work`);
+};
+
+const ensurePicorubyInitialized = (instance, vfs) => {
+	if (instance.picorubyInitialized) {
+		return;
+	}
+
+	writeVfsToRuntime(instance, vfs);
+	instance.ccall('picorb_init', 'number', [], []);
+	instance.picorubyInitialized = true;
+	instance.picorubyRun();
 };
 
 /**
@@ -209,7 +290,6 @@ const moduleReady = loadPicorubyModule()
 			runtimeState.debugPollInterval = setInterval(pollDebugStatus, 200);
 		};
 
-		instance.ccall('picorb_init', 'number', [], []);
 		instance.picorubyRun = function() {
 			const MRB_TICK_UNIT = 4;
 			const BATCH_DURATION = 16;
@@ -310,7 +390,6 @@ const moduleReady = loadPicorubyModule()
 
 			run();
 		};
-		instance.picorubyRun();
 		startDebugPolling();
 		console.log('PicoRuby WASM in WebView Loaded!');
 		vscode.postMessage({ type: 'ready' });
@@ -542,6 +621,7 @@ window.addEventListener('message', async (event) => {
     }
 
 	const instance = await moduleReady;
+	ensurePicorubyInitialized(instance, data.vfs);
 	const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
 	const runtimeBreakpoints = Array.isArray(data.breakpoints)
 		? data.breakpoints.filter((line) => Number.isInteger(line) && line > 0)
@@ -570,6 +650,8 @@ window.addEventListener('message', async (event) => {
 if (typeof module !== 'undefined' && module.exports) {
 	module.exports = {
 		stringifyLogValue,
-		safeParseJson
+		safeParseJson,
+		normalizeVfsPath,
+		writeVfsToRuntime
 	};
 }

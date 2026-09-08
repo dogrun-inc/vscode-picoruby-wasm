@@ -138,6 +138,11 @@
     "test:webview": "jest src/test/webviewRuntime.test.js",
     "test": "vscode-test && npm run test:webview"
   },
+  "jest": {
+    "modulePathIgnorePatterns": [
+      "<rootDir>/.vscode-test"
+    ]
+  },
   "dependencies": {
     "@vscode/debugadapter": "^1.68.0"
   },

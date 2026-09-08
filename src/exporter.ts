@@ -153,7 +153,6 @@ function createSingleHtmlBootstrapScript(): string {
 		}
 
 		ensureVfsDirectory(fs, '/work');
-
 		for (const [rawPath, content] of Object.entries(vfs)) {
 			const relativePath = normalizeVfsPath(rawPath);
 			if (!relativePath || typeof content !== 'string') {
@@ -174,6 +173,79 @@ function createSingleHtmlBootstrapScript(): string {
 		if (typeof fs.chdir === 'function') {
 			fs.chdir('/work');
 		}
+	}
+
+	function normalizeResolvedVfsPath(value) {
+		const segments = [];
+		for (const segment of value.replace(/\\/g, '/').split('/')) {
+			if (segment.length === 0 || segment === '.') {
+				continue;
+			}
+
+			if (segment === '..') {
+				if (segments.length === 0) {
+					return null;
+				}
+				segments.pop();
+				continue;
+			}
+
+			segments.push(segment);
+		}
+
+		return segments.length > 0 ? segments.join('/') : null;
+	}
+
+	function dirnameVfsPath(filePath) {
+		const slashIndex = filePath.lastIndexOf('/');
+		return slashIndex >= 0 ? filePath.slice(0, slashIndex) : '';
+	}
+
+	function resolveVfsRequirePath(request, importerPath, vfs) {
+		if (!vfs || typeof vfs !== 'object' || typeof request !== 'string' || request === 'js') {
+			return null;
+		}
+
+		const basePath = request.startsWith('./') || request.startsWith('../')
+			? normalizeResolvedVfsPath(dirnameVfsPath(importerPath) + '/' + request)
+			: normalizeResolvedVfsPath(request);
+
+		if (!basePath) {
+			return null;
+		}
+
+		for (const candidate of [basePath, basePath + '.rb', basePath + '/index.rb']) {
+			if (typeof vfs[candidate] === 'string') {
+				return candidate;
+			}
+		}
+
+		return null;
+	}
+
+	function expandVfsRequires(code, vfs, importerPath = '__entrypoint__.rb', loadedPaths = new Set()) {
+		if (!vfs || typeof vfs !== 'object') {
+			return code;
+		}
+
+		return code.split('\n').map((line) => {
+			const match = line.match(/^\s*require\s+['"]([^'"]+)['"]\s*(?:#.*)?$/);
+			if (!match) {
+				return line;
+			}
+
+			const resolvedPath = resolveVfsRequirePath(match[1], importerPath, vfs);
+			if (!resolvedPath) {
+				return line;
+			}
+
+			if (loadedPaths.has(resolvedPath)) {
+				return '';
+			}
+
+			loadedPaths.add(resolvedPath);
+			return expandVfsRequires(vfs[resolvedPath], vfs, resolvedPath, loadedPaths);
+		}).join('\n');
 	}
 
 	async function collectRubyScripts() {
@@ -260,7 +332,7 @@ function createSingleHtmlBootstrapScript(): string {
 			if (task.filename) {
 				Module.ccall('picorb_create_task_with_filename', 'number', ['string', 'string'], [task.code, task.filename]);
 			} else {
-				Module.ccall('picorb_create_task', 'number', ['string'], [task.code]);
+				Module.ccall('picorb_create_task', 'number', ['string'], [expandVfsRequires(task.code, global.__PICORUBY_VFS__)]);
 			}
 		});
 	} catch (error) {
@@ -290,7 +362,7 @@ function createSingleHtmlBootstrapScript(): string {
 
 	if (global.userTasks) {
 		global.userTasks.forEach((task) => {
-			Module.ccall('picorb_create_task', 'number', ['string'], [typeof task === 'string' ? task : task.code]);
+			Module.ccall('picorb_create_task', 'number', ['string'], [expandVfsRequires(typeof task === 'string' ? task : task.code, global.__PICORUBY_VFS__)]);
 		});
 	}
 

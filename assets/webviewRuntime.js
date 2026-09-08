@@ -185,6 +185,80 @@ const writeVfsToRuntime = (instance, vfs) => {
 	console.log(`[vfs] mounted ${count} Ruby file(s) under /work`);
 };
 
+const normalizeResolvedVfsPath = (value) => {
+	const segments = [];
+	for (const segment of value.replace(/\\/g, '/').split('/')) {
+		if (segment.length === 0 || segment === '.') {
+			continue;
+		}
+
+		if (segment === '..') {
+			if (segments.length === 0) {
+				return null;
+			}
+			segments.pop();
+			continue;
+		}
+
+		segments.push(segment);
+	}
+
+	return segments.length > 0 ? segments.join('/') : null;
+};
+
+const dirnameVfsPath = (filePath) => {
+	const slashIndex = filePath.lastIndexOf('/');
+	return slashIndex >= 0 ? filePath.slice(0, slashIndex) : '';
+};
+
+const resolveVfsRequirePath = (request, importerPath, vfs) => {
+	if (!vfs || typeof vfs !== 'object' || typeof request !== 'string' || request === 'js') {
+		return null;
+	}
+
+	const basePath = request.startsWith('./') || request.startsWith('../')
+		? normalizeResolvedVfsPath(`${dirnameVfsPath(importerPath)}/${request}`)
+		: normalizeResolvedVfsPath(request);
+
+	if (!basePath) {
+		return null;
+	}
+
+	for (const candidate of [basePath, `${basePath}.rb`, `${basePath}/index.rb`]) {
+		if (typeof vfs[candidate] === 'string') {
+			return candidate;
+		}
+	}
+
+	return null;
+};
+
+const expandVfsRequires = (code, vfs, importerPath = '__entrypoint__.rb', loadedPaths = new Set()) => {
+	if (!vfs || typeof vfs !== 'object') {
+		return code;
+	}
+
+	return code.split('\n').map((line) => {
+		const match = line.match(/^\s*require\s+['"]([^'"]+)['"]\s*(?:#.*)?$/);
+		if (!match) {
+			return line;
+		}
+
+		const resolvedPath = resolveVfsRequirePath(match[1], importerPath, vfs);
+		if (!resolvedPath) {
+			return line;
+		}
+
+		if (loadedPaths.has(resolvedPath)) {
+			return '';
+		}
+
+		loadedPaths.add(resolvedPath);
+		console.log(`[vfs] expanded require '${match[1]}' from ${resolvedPath}`);
+		return expandVfsRequires(vfs[resolvedPath], vfs, resolvedPath, loadedPaths);
+	}).join('\n');
+};
+
 const ensurePicorubyInitialized = (instance, vfs) => {
 	if (instance.picorubyInitialized) {
 		return;
@@ -636,7 +710,7 @@ window.addEventListener('message', async (event) => {
 	console.log('Received start command from VS Code.');
 	console.log(receivedCode);
 	try {
-		instance.ccall('picorb_create_task', 'number', ['string'], [receivedCode]);
+		instance.ccall('picorb_create_task', 'number', ['string'], [expandVfsRequires(receivedCode, data.vfs)]);
 		instance.picorubyDebugState.sessionStarted = true;
 		if (typeof instance.picorubyResume === 'function') {
 			instance.picorubyResume();
@@ -652,6 +726,8 @@ if (typeof module !== 'undefined' && module.exports) {
 		stringifyLogValue,
 		safeParseJson,
 		normalizeVfsPath,
-		writeVfsToRuntime
+		writeVfsToRuntime,
+		resolveVfsRequirePath,
+		expandVfsRequires
 	};
 }

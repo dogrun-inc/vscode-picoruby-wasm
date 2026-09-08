@@ -30,6 +30,8 @@ suite('single HTML exporter', () => {
 			assert.ok(html.includes('window.__PICORUBY_VFS__ = {"sub.rb":"MESSAGE = \\"hello\\"\\n"};'));
 			assert.ok(html.includes('window.__PICORUBY_WASM_BASE64__ = '));
 			assert.ok(html.includes('window.__PICORUBY_MODULE_SOURCE__ = '));
+			assert.ok(html.includes('function expandVfsRequires'));
+			assert.ok(html.includes('expandVfsRequires(task.code, global.__PICORUBY_VFS__)'));
 			assert.ok(!html.includes('src="init.iife.js"'));
 		} finally {
 			rmSync(directory, { recursive: true, force: true });

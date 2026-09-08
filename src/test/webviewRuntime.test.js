@@ -65,6 +65,22 @@ describe('webviewRuntime.js Test Suite', () => {
 			expect(fs.chdir).toHaveBeenCalledWith('/work');
 			expect(calls).toContainEqual(['mkdir', '/work']);
 		});
+
+		test('expandVfsRequires should inline nested requires from subdirectories', () => {
+			const code = webviewRuntime.expandVfsRequires('require "main"', {
+				'main.rb': ['require "js"', 'require "./lib/message"', 'require "ui/status_view"', 'puts SampleMessage.line'].join('\n'),
+				'lib/message.rb': 'module SampleMessage\nend',
+				'ui/status_view.rb': 'class StatusView\nend'
+			});
+
+			expect(code).toContain('require "js"');
+			expect(code).toContain('module SampleMessage');
+			expect(code).toContain('class StatusView');
+			expect(code).toContain('puts SampleMessage.line');
+			expect(code).not.toContain('require "main"');
+			expect(code).not.toContain('require "./lib/message"');
+			expect(code).not.toContain('require "ui/status_view"');
+		});
 	});
 
 	describe('Status Polling & Notifications', () => {

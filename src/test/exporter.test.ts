@@ -37,4 +37,34 @@ suite('single HTML exporter', () => {
 			rmSync(directory, { recursive: true, force: true });
 		}
 	});
+
+	test('inlines safe local CSS with URL suffixes and treats leading slash as relative', async () => {
+		const repoRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.resolve(__dirname, '..', '..');
+		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-export-css-'));
+		const htmlPath = path.join(directory, 'index.html');
+
+		try {
+			writeFileSync(path.join(directory, 'style.css'), 'body { color: red; }');
+			writeFileSync(path.join(path.dirname(directory), 'outside.css'), 'body { color: blue; }');
+			writeFileSync(
+				htmlPath,
+				[
+					'<html><head>',
+					'<link rel="stylesheet" href="/style.css?v=1#theme">',
+					'<link rel="stylesheet" href="../outside.css">',
+					'<link rel="stylesheet" href="missing.css">',
+					'</head><body></body></html>'
+				].join('\n')
+			);
+
+			const html = await buildPicoRubySingleHtml({ extensionUri: vscode.Uri.file(repoRoot) } as vscode.ExtensionContext, htmlPath);
+
+			assert.ok(html.includes('body { color: red; }'));
+			assert.ok(html.includes('href="../outside.css"'));
+			assert.ok(html.includes('href="missing.css"'));
+			assert.ok(!html.includes('body { color: blue; }'));
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
 });

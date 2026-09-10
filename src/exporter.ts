@@ -68,15 +68,29 @@ async function inlineExternalCss(htmlContent: string, htmlPath: string): Promise
 	let match: RegExpExecArray | null;
 
 	while ((match = linkRegex.exec(htmlContent)) !== null) {
-		const cssHref = match[1] || match[2];
-		if (!cssHref || cssHref.startsWith('//') || /^[a-z][a-z\d+.-]*:/i.test(cssHref)) {
+		const originalHref = match[1] || match[2];
+		if (!originalHref || originalHref.startsWith('//') || /^[a-z][a-z\d+.-]*:/i.test(originalHref)) {
+			continue;
+		}
+
+		const cssHref = originalHref.split(/[?#]/, 1)[0].replace(/^\/+/, '');
+		if (!cssHref) {
 			continue;
 		}
 
 		const cssPath = path.resolve(htmlDir, cssHref);
-		const cssContent = await readFile(cssPath, 'utf8');
-		const safeCssContent = cssContent.replace(/<\/style/gi, '<\\/style');
-		resolvedHtml = resolvedHtml.replace(match[0], `<style>\n/* inlined: ${cssHref} */\n${safeCssContent}\n</style>`);
+		const relativeCssPath = path.relative(htmlDir, cssPath);
+		if (relativeCssPath.startsWith('..' + path.sep) || path.isAbsolute(relativeCssPath)) {
+			continue;
+		}
+
+		try {
+			const cssContent = await readFile(cssPath, 'utf8');
+			const safeCssContent = cssContent.replace(/<\/style/gi, '<\\/style');
+			resolvedHtml = resolvedHtml.replace(match[0], `<style>\n/* inlined: ${cssHref} */\n${safeCssContent}\n</style>`);
+		} catch {
+			continue;
+		}
 	}
 
 	return resolvedHtml;

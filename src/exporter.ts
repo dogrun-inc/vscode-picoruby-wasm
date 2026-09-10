@@ -4,17 +4,22 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { collectVfsFiles, VfsMap } from './vfsCollector';
 
 export async function exportPicoRubySingleHtml(context: vscode.ExtensionContext, sourceUri?: vscode.Uri): Promise<void> {
-	const targetHtmlPath = await resolveTargetHtmlPath(sourceUri);
-	if (!targetHtmlPath) {
-		return;
+	try {
+		const targetHtmlPath = await resolveTargetHtmlPath(sourceUri);
+		if (!targetHtmlPath) {
+			return;
+		}
+
+		const outputPath = path.join(path.dirname(targetHtmlPath), 'dist', 'index.html');
+		const html = await buildPicoRubySingleHtml(context, targetHtmlPath);
+
+		await mkdir(path.dirname(outputPath), { recursive: true });
+		await writeFile(outputPath, html, 'utf8');
+		void vscode.window.showInformationMessage(`PicoRuby single HTML exported: ${outputPath}`);
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : String(error);
+		void vscode.window.showErrorMessage(`Failed to export PicoRuby single HTML: ${message}`);
 	}
-
-	const outputPath = path.join(path.dirname(targetHtmlPath), 'dist', 'index.html');
-	const html = await buildPicoRubySingleHtml(context, targetHtmlPath);
-
-	await mkdir(path.dirname(outputPath), { recursive: true });
-	await writeFile(outputPath, html, 'utf8');
-	void vscode.window.showInformationMessage(`PicoRuby single HTML exported: ${outputPath}`);
 }
 
 export async function buildPicoRubySingleHtml(context: vscode.ExtensionContext, targetHtmlPath: string): Promise<string> {

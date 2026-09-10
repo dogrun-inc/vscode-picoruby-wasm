@@ -322,8 +322,16 @@ class PicoRubyWasmMockSessionState {
 	async launch(args: PicoRubyWasmLaunchArguments): Promise<{ output: string }> {
 		this.activeProgram = this.resolveProgramPath(args.program, args.cwd);
 		this.currentLine = 1;
-		this.pendingStartVfs = await collectVfsFiles(this.activeProgram);
-		this.pendingStartCode = await this.readProgramSource(this.activeProgram);
+
+		const [vfs, code] = await Promise.all([
+			collectVfsFiles(this.activeProgram).catch((error) => {
+				console.error('[vfs] failed to collect Ruby files', error);
+				return {};
+			}),
+			this.readProgramSource(this.activeProgram)
+		]);
+		this.pendingStartVfs = vfs;
+		this.pendingStartCode = code;
 		this.activeProgramLines = this.pendingStartCode.split('\n');
 		this.showWebviewPanel();
 		this.postStartMessageIfReady();

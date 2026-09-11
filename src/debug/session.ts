@@ -11,6 +11,7 @@ import {
 	TerminatedEvent
 } from '@vscode/debugadapter';
 import { PicoRubyWasmRuntimeClient } from './wasmRuntimeClient';
+import { collectVfsFiles, VfsMap } from '../vfsCollector';
 
 /**
  * viewType used to identify the WebView panel.
@@ -264,6 +265,8 @@ class PicoRubyWasmMockSessionState {
 	private pendingStartCode: string | undefined;
 	/** HTML content waiting to be sent to the WebView runtime for DOM rendering. */
 	private pendingStartHtml: string | undefined;
+	/** Ruby files waiting to be mounted into the WebView runtime VFS. */
+	private pendingStartVfs: VfsMap | undefined;
 	/** Pending requests for webview mapped by their request ID. */
 	private pendingRequests = new Map<string, (data: any) => void>();
 	/** 1-based line number where the script started. Used to adjust stack frames. */
@@ -319,7 +322,17 @@ class PicoRubyWasmMockSessionState {
 	async launch(args: PicoRubyWasmLaunchArguments): Promise<{ output: string }> {
 		this.activeProgram = this.resolveProgramPath(args.program, args.cwd);
 		this.currentLine = 1;
-		this.pendingStartCode = await this.readProgramSource(this.activeProgram);
+
+		const [vfs, code] = await Promise.all([
+			collectVfsFiles(this.activeProgram).catch((error: unknown) => {
+				const message = error instanceof Error ? error.message : String(error);
+				this.onWebviewLog?.(`Failed to collect VFS files: ${message}; continuing without VFS`);
+				return {};
+			}),
+			this.readProgramSource(this.activeProgram)
+		]);
+		this.pendingStartVfs = vfs;
+		this.pendingStartCode = code;
 		this.activeProgramLines = this.pendingStartCode.split('\n');
 		this.showWebviewPanel();
 		this.postStartMessageIfReady();
@@ -342,6 +355,7 @@ class PicoRubyWasmMockSessionState {
 	reset(): Promise<void> {
 		this.pendingStartCode = undefined;
 		this.pendingStartHtml = undefined;
+		this.pendingStartVfs = undefined;
 		this.activeProgramLines = [];
 		this.breakpointsByPath.clear();
 		this.scriptStartLine = 1;
@@ -632,13 +646,16 @@ class PicoRubyWasmMockSessionState {
 
 		const code = this.injectBindingIrb(this.pendingStartCode, this.configuredBreakpoints);
 		const html = this.pendingStartHtml;
+		const vfs = this.pendingStartVfs ?? {};
 		this.pendingStartCode = undefined;
 		this.pendingStartHtml = undefined;
+		this.pendingStartVfs = undefined;
 
 		void this.webviewPanel.webview.postMessage({
 			type: 'start',
 			code,
 			html,
+			vfs,
 			breakpoints: this.configuredBreakpoints
 		});
 	}

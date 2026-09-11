@@ -74,6 +74,10 @@
       {
         "command": "picoruby.disable",
         "title": "Disable PicoRuby for this workspace (remove .rb mapping)"
+      },
+      {
+        "command": "picoruby.exportSingleHtml",
+        "title": "PicoRuby: Export Single HTML"
       }
     ],
     "breakpoints": [
@@ -133,6 +137,11 @@
     "test:vscode": "vscode-test",
     "test:webview": "jest src/test/webviewRuntime.test.js",
     "test": "vscode-test && npm run test:webview"
+  },
+  "jest": {
+    "modulePathIgnorePatterns": [
+      "<rootDir>/.vscode-test"
+    ]
   },
   "dependencies": {
     "@vscode/debugadapter": "^1.68.0"

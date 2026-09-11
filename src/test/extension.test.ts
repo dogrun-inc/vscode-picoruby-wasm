@@ -10,7 +10,7 @@ import * as vscode from 'vscode';
 suite('Extension Test Suite', () => {
 	vscode.window.showInformationMessage('Start all tests.');
 
-	const repoRoot = path.resolve(__dirname, '..', '..');
+	const repoRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.resolve(__dirname, '..', '..');
 
 	const readJson = (relativePath: string): any => {
 		const filePath = path.join(repoRoot, relativePath);
@@ -67,6 +67,16 @@ suite('Extension Test Suite', () => {
 		assert.ok(
 			activationEvents.includes('onLanguage:picoruby'),
 			'extension must activate for picoruby documents'
+		);
+	});
+
+	test('package.json registers single HTML export command', () => {
+		const pkg = readJson('package.json');
+		const commands = pkg.contributes?.commands as any[];
+
+		assert.ok(
+			Array.isArray(commands) && commands.some((command) => command.command === 'picoruby.exportSingleHtml'),
+			'export command must be contributed'
 		);
 	});
 

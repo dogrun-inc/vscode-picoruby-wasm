@@ -324,8 +324,9 @@ class PicoRubyWasmMockSessionState {
 		this.currentLine = 1;
 
 		const [vfs, code] = await Promise.all([
-			collectVfsFiles(this.activeProgram).catch((error) => {
-				console.error('[vfs] failed to collect Ruby files', error);
+			collectVfsFiles(this.activeProgram).catch((error: unknown) => {
+				const message = error instanceof Error ? error.message : String(error);
+				this.onWebviewLog?.(`Failed to collect VFS files: ${message}; continuing without VFS`);
 				return {};
 			}),
 			this.readProgramSource(this.activeProgram)

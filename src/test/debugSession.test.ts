@@ -236,6 +236,32 @@ suite('debug session adapter', () => {
 		}
 	});
 
+	test('continues launch with empty VFS and logs output when VFS collection fails', async () => {
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+		const messages: DebugMessage[] = [];
+		const subscription = adapter.onDidSendMessage((message: any) => messages.push(message));
+
+		try {
+			// Provide an invalid program path directory that will cause collectVfsFiles to fail
+			const invalidProgramPath = path.join(os.tmpdir(), 'non-existent-dir-12345', 'index.html');
+			await adapter.state.launch({ program: invalidProgramPath });
+
+			assert.deepStrictEqual(adapter.state.pendingStartVfs, {});
+			assert.ok(
+				messages.some(
+					(message) =>
+						message.type === 'event' &&
+						message.event === 'output' &&
+						typeof message.body?.output === 'string' &&
+						message.body.output.includes('Failed to collect VFS files')
+				)
+			);
+		} finally {
+			subscription.dispose();
+			adapter.dispose();
+		}
+	});
+
 	test('continue, next, and stepIn requests return success responses', () => {
 		const continueMessages = collectMessages('continue');
 		assert.strictEqual(continueMessages.length, 2);

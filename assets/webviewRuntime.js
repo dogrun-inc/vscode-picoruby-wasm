@@ -118,6 +118,11 @@ const loadPicorubyModule = () => {
 	return import('./picoruby.js');
 };
 
+/**
+ * Normalizes a collected VFS key and rejects paths that escape the VFS root.
+ * @param {unknown} relativePath Relative path received from the extension host.
+ * @returns {string|null} Safe POSIX-style path, or null for invalid input.
+ */
 const normalizeVfsPath = (relativePath) => {
 	if (typeof relativePath !== 'string') {
 		return null;
@@ -132,6 +137,11 @@ const normalizeVfsPath = (relativePath) => {
 	return segments.join('/');
 };
 
+/**
+ * Creates all directory components needed for a path in Emscripten FS.
+ * @param {object} fs Emscripten filesystem API.
+ * @param {string} directoryPath Absolute virtual directory path.
+ */
 const ensureVfsDirectory = (fs, directoryPath) => {
 	const segments = directoryPath.split('/').filter(Boolean);
 	let currentPath = '';
@@ -146,6 +156,11 @@ const ensureVfsDirectory = (fs, directoryPath) => {
 	}
 };
 
+/**
+ * Writes collected Ruby files into the runtime VFS under /work.
+ * @param {object} instance Initialized or initializing PicoRuby module.
+ * @param {object} vfs Map of normalized relative paths to Ruby source text.
+ */
 const writeVfsToRuntime = (instance, vfs) => {
 	if (!vfs || typeof vfs !== 'object') {
 		return;
@@ -185,6 +200,11 @@ const writeVfsToRuntime = (instance, vfs) => {
 	console.log(`[vfs] mounted ${count} Ruby file(s) under /work`);
 };
 
+/**
+ * Normalizes a require target while resolving dot segments safely.
+ * @param {string} value VFS-relative path to normalize.
+ * @returns {string|null} Normalized path, or null when traversal escapes the root.
+ */
 const normalizeResolvedVfsPath = (value) => {
 	const segments = [];
 	for (const segment of value.replace(/\\/g, '/').split('/')) {
@@ -206,11 +226,23 @@ const normalizeResolvedVfsPath = (value) => {
 	return segments.length > 0 ? segments.join('/') : null;
 };
 
+/**
+ * Returns the directory portion of a normalized VFS path.
+ * @param {string} filePath VFS-relative file path.
+ * @returns {string} Parent directory, or an empty string for a root-level file.
+ */
 const dirnameVfsPath = (filePath) => {
 	const slashIndex = filePath.lastIndexOf('/');
 	return slashIndex >= 0 ? filePath.slice(0, slashIndex) : '';
 };
 
+/**
+ * Resolves a Ruby require request against collected VFS entries.
+ * @param {unknown} request Require name from Ruby source.
+ * @param {string} importerPath VFS path of the source containing the require.
+ * @param {object} vfs Map of VFS paths to source text.
+ * @returns {string|null} Matching VFS path, or null for runtime/bad requests.
+ */
 const resolveVfsRequirePath = (request, importerPath, vfs) => {
 	if (!vfs || typeof vfs !== 'object' || typeof request !== 'string' || request === 'js') {
 		return null;
@@ -233,6 +265,14 @@ const resolveVfsRequirePath = (request, importerPath, vfs) => {
 	return null;
 };
 
+/**
+ * Recursively expands local require statements before Ruby task creation.
+ * @param {string} code Ruby source to expand.
+ * @param {object} vfs Map of VFS paths to source text.
+ * @param {string} importerPath VFS path of the current source.
+ * @param {Set<string>} loadedPaths Paths already expanded in this task.
+ * @returns {string} Ruby source with resolvable local requires inlined.
+ */
 const expandVfsRequires = (code, vfs, importerPath = '__entrypoint__.rb', loadedPaths = new Set()) => {
 	if (!vfs || typeof vfs !== 'object') {
 		return code;
@@ -259,6 +299,11 @@ const expandVfsRequires = (code, vfs, importerPath = '__entrypoint__.rb', loaded
 	}).join('\n');
 };
 
+/**
+ * Initializes PicoRuby once, mounting VFS files before WASI setup.
+ * @param {object} instance PicoRuby module instance.
+ * @param {object} vfs Map of collected Ruby files.
+ */
 const ensurePicorubyInitialized = (instance, vfs) => {
 	if (instance.picorubyInitialized) {
 		return;

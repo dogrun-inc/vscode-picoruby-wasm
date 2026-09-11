@@ -41,7 +41,7 @@ export async function buildPicoRubySingleHtml(context: vscode.ExtensionContext, 
 }
 
 async function resolveTargetHtmlPath(sourceUri?: vscode.Uri): Promise<string | undefined> {
-	if (sourceUri?.scheme === 'file') {
+	if (sourceUri?.scheme === 'file' && /\.html?$/i.test(sourceUri.fsPath)) {
 		return sourceUri.fsPath;
 	}
 

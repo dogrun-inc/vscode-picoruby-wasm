@@ -3,6 +3,15 @@ import * as path from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { collectVfsFiles, VfsMap } from './vfsCollector';
 
+/**
+ * Exports the selected PicoRuby HTML entrypoint as a self-contained HTML file.
+ *
+ * The output is written to a `dist/index.html` directory next to the source
+ * entrypoint and includes the PicoRuby runtime, WASM binary, and collected VFS.
+ *
+ * @param context Extension context used to resolve bundled runtime assets.
+ * @param sourceUri Optional HTML file selected from an Explorer context menu.
+ */
 export async function exportPicoRubySingleHtml(context: vscode.ExtensionContext, sourceUri?: vscode.Uri): Promise<void> {
 	try {
 		const targetHtmlPath = await resolveTargetHtmlPath(sourceUri);
@@ -22,6 +31,13 @@ export async function exportPicoRubySingleHtml(context: vscode.ExtensionContext,
 	}
 }
 
+/**
+ * Builds the complete single-file HTML document without writing it to disk.
+ *
+ * @param context Extension context used to resolve bundled runtime assets.
+ * @param targetHtmlPath Absolute path to the HTML entrypoint.
+ * @returns HTML containing the source document and an embedded PicoRuby runtime.
+ */
 export async function buildPicoRubySingleHtml(context: vscode.ExtensionContext, targetHtmlPath: string): Promise<string> {
 	const [sourceHtml, vfs, picorubyScript, picorubyWasm, bootstrapScript] = await Promise.all([
 		readFile(targetHtmlPath, 'utf8'),
@@ -40,6 +56,9 @@ export async function buildPicoRubySingleHtml(context: vscode.ExtensionContext, 
 	});
 }
 
+/**
+ * Resolves an HTML entrypoint from an explicit URI, the active editor, or a picker.
+ */
 async function resolveTargetHtmlPath(sourceUri?: vscode.Uri): Promise<string | undefined> {
 	if (sourceUri?.scheme === 'file' && /\.html?$/i.test(sourceUri.fsPath)) {
 		return sourceUri.fsPath;
@@ -61,11 +80,17 @@ async function resolveTargetHtmlPath(sourceUri?: vscode.Uri): Promise<string | u
 	return picked?.[0]?.fsPath;
 }
 
+/**
+ * Reads a runtime asset shipped with the extension package.
+ */
 async function readExtensionAsset(context: vscode.ExtensionContext, fileName: string, encoding?: BufferEncoding): Promise<Buffer | string> {
 	const assetPath = vscode.Uri.joinPath(context.extensionUri, 'assets', fileName).fsPath;
 	return readFile(assetPath, encoding ? { encoding } : undefined);
 }
 
+/**
+ * Inlines safe local stylesheets while preserving external and unsafe references.
+ */
 async function inlineExternalCss(htmlContent: string, htmlPath: string): Promise<string> {
 	const htmlDir = path.dirname(htmlPath);
 	const linkRegex = /<link\s+[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>|<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["']stylesheet["'][^>]*>/gi;
@@ -101,6 +126,9 @@ async function inlineExternalCss(htmlContent: string, htmlPath: string): Promise
 	return resolvedHtml;
 }
 
+/**
+ * Injects serialized runtime data and the packaged bootstrap into the HTML document.
+ */
 function injectSingleHtmlRuntime(html: string, payload: {
 	vfs: VfsMap;
 	picorubyScript: string;
@@ -128,6 +156,9 @@ function injectSingleHtmlRuntime(html: string, payload: {
 	return `${htmlWithoutLocalInit}\n${runtimeScript}`;
 }
 
+/**
+ * Escapes JSON characters that could terminate or alter an inline script element.
+ */
 function jsonForHtmlScript(value: unknown): string {
 	return JSON.stringify(value)
 		.replace(/</g, '\\u003c')

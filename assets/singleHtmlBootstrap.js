@@ -1,4 +1,10 @@
+/**
+ * Self-contained browser bootstrap used by the exported single HTML document.
+ * It initializes PicoRuby, mounts the embedded VFS, expands local Ruby requires,
+ * and starts Ruby and MRB tasks found in the document.
+ */
 (async function(global) {
+	// Converts the embedded WASM payload back into the binary expected by Emscripten.
 	function base64ToUint8Array(base64) {
 		const binary = atob(base64);
 		const bytes = new Uint8Array(binary.length);
@@ -8,6 +14,7 @@
 		return bytes;
 	}
 
+	// Normalizes a VFS key and rejects traversal outside the virtual root.
 	function normalizeVfsPath(relativePath) {
 		if (typeof relativePath !== 'string') {
 			return null;
@@ -22,6 +29,7 @@
 		return segments.join('/');
 	}
 
+	// Creates each directory required by a VFS file before it is written.
 	function ensureVfsDirectory(fs, directoryPath) {
 		const segments = directoryPath.split('/').filter(Boolean);
 		let currentPath = '';
@@ -35,6 +43,7 @@
 		}
 	}
 
+	// Copies the embedded Ruby files into Emscripten's in-memory filesystem.
 	function mountVfs(Module) {
 		const vfs = global.__PICORUBY_VFS__;
 		const fs = Module.FS;
@@ -65,6 +74,7 @@
 		}
 	}
 
+	// Normalizes a require target and rejects traversal outside the virtual root.
 	function normalizeResolvedVfsPath(value) {
 		const segments = [];
 		for (const segment of value.replace(/\\/g, '/').split('/')) {
@@ -86,11 +96,13 @@
 		return segments.length > 0 ? segments.join('/') : null;
 	}
 
+	// Returns the directory portion used for relative require requests.
 	function dirnameVfsPath(filePath) {
 		const slashIndex = filePath.lastIndexOf('/');
 		return slashIndex >= 0 ? filePath.slice(0, slashIndex) : '';
 	}
 
+	// Applies Ruby's common .rb and index.rb require conventions to VFS keys.
 	function resolveVfsRequirePath(request, importerPath, vfs) {
 		if (!vfs || typeof vfs !== 'object' || typeof request !== 'string' || request === 'js') {
 			return null;
@@ -113,6 +125,7 @@
 		return null;
 	}
 
+	// Recursively replaces local require statements with their VFS source code.
 	function expandVfsRequires(code, vfs, importerPath = '__entrypoint__.rb', loadedPaths = new Set()) {
 		if (!vfs || typeof vfs !== 'object') {
 			return code;
@@ -138,6 +151,7 @@
 		}).join('\n');
 	}
 
+	// Collects Ruby script tags from the exported document.
 	async function collectRubyScripts() {
 		const rubyScripts = document.querySelectorAll('script[type="text/ruby"], script[type="text/picoruby"]');
 		const taskPromises = Array.from(rubyScripts).map(async (script) => {
@@ -155,6 +169,7 @@
 		return Promise.all(taskPromises);
 	}
 
+	// Collects referenced MRB binaries from the exported document.
 	async function collectMrbVMCode() {
 		const mrbScripts = document.querySelectorAll('script[type="application/x-mrb"]');
 		const taskPromises = Array.from(mrbScripts).map(async (script) => {

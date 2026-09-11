@@ -160,7 +160,8 @@ function injectSingleHtmlRuntime(html: string, payload: {
  * Escapes JSON characters that could terminate or alter an inline script element.
  */
 function jsonForHtmlScript(value: unknown): string {
-	return JSON.stringify(value)
+	const serialized = JSON.stringify(value);
+	return (serialized ?? 'null')
 		.replace(/</g, '\\u003c')
 		.replace(/>/g, '\\u003e')
 		.replace(/&/g, '\\u0026')

@@ -186,6 +186,11 @@
 	async function collectMrbVMCode() {
 		const mrbScripts = document.querySelectorAll('script[type="application/x-mrb"]');
 		const taskPromises = Array.from(mrbScripts).map(async (script) => {
+			const embeddedMrb = script.getAttribute('data-picoruby-mrb');
+			if (embeddedMrb) {
+				return base64ToUint8Array(embeddedMrb);
+			}
+
 			if (!script.src) {
 				return null;
 			}

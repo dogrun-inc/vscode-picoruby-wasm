@@ -78,6 +78,10 @@ suite('Extension Test Suite', () => {
 			Array.isArray(commands) && commands.some((command) => command.command === 'picoruby.exportSingleHtml'),
 			'export command must be contributed'
 		);
+		assert.ok(
+			Array.isArray(commands) && commands.some((command) => command.command === 'picoruby.exportMrbHtml'),
+			'MRB export command must be contributed'
+		);
 	});
 
 	test('package.json registers picoruby-wasm debugger', () => {

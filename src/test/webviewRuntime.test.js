@@ -81,6 +81,40 @@ describe('webviewRuntime.js Test Suite', () => {
 			expect(code).not.toContain('require "./lib/message"');
 			expect(code).not.toContain('require "ui/status_view"');
 		});
+
+		test('collectDebugRubyScripts should resolve multiple src scripts from VFS in document order', () => {
+			const tasks = webviewRuntime.collectDebugRubyScripts(
+				[
+					'<script type="text/ruby" src="setup.rb"></script>',
+					'<script type="text/picoruby" src="lib/app.rb"></script>',
+					'<script type="text/ruby">puts "inline"</script>'
+				].join('\n'),
+				'puts "fallback"',
+				{
+					'setup.rb': 'puts "setup"',
+					'lib/app.rb': 'puts "app"'
+				}
+			);
+
+			expect(tasks).toEqual([
+				{ code: 'puts "setup"', filename: 'setup.rb' },
+				{ code: 'puts "app"', filename: 'lib/app.rb' },
+				{ code: 'puts "fallback"', filename: null }
+			]);
+		});
+
+		test('collectDebugRubyScripts should retain inline scripts after external scripts', () => {
+			const tasks = webviewRuntime.collectDebugRubyScripts(
+				'<script type="text/ruby" src="main.rb"></script><script type="text/ruby">puts "inline"</script>',
+				'',
+				{ 'main.rb': 'puts "external"' }
+			);
+
+			expect(tasks).toEqual([
+				{ code: 'puts "external"', filename: 'main.rb' },
+				{ code: 'puts "inline"', filename: null }
+			]);
+		});
 	});
 
 	describe('Status Polling & Notifications', () => {

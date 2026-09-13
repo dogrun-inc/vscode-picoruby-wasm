@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 
-import { buildPicoRubySingleHtml } from '../exporter';
+import { buildPicoRubyMrbHtml, buildPicoRubySingleHtml } from '../exporter';
 
 suite('single HTML exporter', () => {
 	test('embeds collected VFS data and removes local init script reference', async () => {
@@ -31,7 +31,8 @@ suite('single HTML exporter', () => {
 			assert.ok(html.includes('window.__PICORUBY_WASM_BASE64__ = '));
 			assert.ok(html.includes('window.__PICORUBY_MODULE_SOURCE__ = '));
 			assert.ok(html.includes('function expandVfsRequires'));
-			assert.ok(html.includes('expandVfsRequires(task.code, global.__PICORUBY_VFS__)'));
+			assert.ok(html.includes('function resolveVfsScriptPath'));
+			assert.ok(html.includes('instantiateWasm(imports, receiveInstance)'));
 			assert.ok(!html.includes('src="init.iife.js"'));
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
@@ -63,6 +64,33 @@ suite('single HTML exporter', () => {
 			assert.ok(html.includes('href="../outside.css"'));
 			assert.ok(html.includes('href="missing.css"'));
 			assert.ok(!html.includes('body { color: blue; }'));
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test('builds MRB tasks for inline and VFS-backed Ruby script tags', async () => {
+		const repoRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.resolve(__dirname, '..', '..');
+		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-export-mrb-'));
+		const htmlPath = path.join(directory, 'index.html');
+
+		try {
+			writeFileSync(path.join(directory, 'main.rb'), 'puts "external"\n');
+			writeFileSync(
+				htmlPath,
+				[
+					'<html><body>',
+					'<script type="text/ruby" src="main.rb"></script>',
+					'<script type="text/ruby">puts "inline"</script>',
+					'</body></html>'
+				].join('\n')
+			);
+
+			const html = await buildPicoRubyMrbHtml({ extensionUri: vscode.Uri.file(repoRoot) } as vscode.ExtensionContext, htmlPath);
+
+			assert.strictEqual((html.match(/type="application\/x-mrb"/g) ?? []).length, 2);
+			assert.ok(html.includes('data-picoruby-mrb="R1JFTg'));
+			assert.ok(!html.includes('src="main.rb"'));
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}

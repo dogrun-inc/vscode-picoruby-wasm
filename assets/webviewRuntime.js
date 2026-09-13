@@ -266,6 +266,20 @@ const resolveVfsRequirePath = (request, importerPath, vfs) => {
 };
 
 /**
+ * Resolves a Ruby script src attribute against collected VFS entries.
+ * @param {unknown} request Script src attribute value.
+ * @param {object} vfs Map of VFS paths to source text.
+ * @returns {string|null} Matching VFS path, or null when no entry exists.
+ */
+const resolveVfsScriptPath = (request, vfs) => {
+	if (typeof request !== 'string') {
+		return null;
+	}
+
+	return resolveVfsRequirePath(request.split(/[?#]/, 1)[0], '__entrypoint__.rb', vfs);
+};
+
+/**
  * Recursively expands local require statements before Ruby task creation.
  * @param {string} code Ruby source to expand.
  * @param {object} vfs Map of VFS paths to source text.
@@ -297,6 +311,37 @@ const expandVfsRequires = (code, vfs, importerPath = '__entrypoint__.rb', loaded
 		console.log(`[vfs] expanded require '${match[1]}' from ${resolvedPath}`);
 		return expandVfsRequires(vfs[resolvedPath], vfs, resolvedPath, loadedPaths);
 	}).join('\n');
+};
+
+/**
+ * Collects all Ruby script tags from the debug HTML and resolves local src files from VFS.
+ * @param {unknown} html Debug HTML sent by the extension host.
+ * @param {string} fallbackCode First inline script after breakpoint injection.
+ * @param {object} vfs Map of VFS paths to source text.
+ * @returns {Array<{ code: string, filename: string | null }>} Ruby task sources in document order.
+ */
+const collectDebugRubyScripts = (html, fallbackCode, vfs) => {
+	if (typeof html !== 'string') {
+		return fallbackCode.length > 0 ? [{ code: fallbackCode, filename: null }] : [];
+	}
+
+	const document = new DOMParser().parseFromString(html, 'text/html');
+	let usedFallbackCode = false;
+	return Array.from(document.querySelectorAll('script[type="text/ruby"], script[type="text/picoruby"]'))
+		.map((script) => {
+			const sourceAttribute = script.getAttribute('src');
+			if (sourceAttribute) {
+				const vfsPath = resolveVfsScriptPath(sourceAttribute, vfs);
+				return vfsPath ? { code: vfs[vfsPath], filename: vfsPath } : null;
+			}
+
+			const code = !usedFallbackCode && fallbackCode.length > 0
+				? fallbackCode
+				: script.textContent || '';
+			usedFallbackCode = usedFallbackCode || fallbackCode.length > 0;
+			return code.trim().length > 0 ? { code, filename: null } : null;
+		})
+		.filter((task) => task !== null);
 };
 
 /**
@@ -742,6 +787,7 @@ window.addEventListener('message', async (event) => {
 	const instance = await moduleReady;
 	ensurePicorubyInitialized(instance, data.vfs);
 	const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
+	const rubyTasks = collectDebugRubyScripts(data.html, receivedCode, data.vfs);
 	const runtimeBreakpoints = Array.isArray(data.breakpoints)
 		? data.breakpoints.filter((line) => Number.isInteger(line) && line > 0)
 		: instance.picorubyDebugState.breakpoints;
@@ -753,10 +799,17 @@ window.addEventListener('message', async (event) => {
 	instance.picorubyDebugState.breakpoints = runtimeBreakpoints;
 
 	console.log('Received start command from VS Code.');
-	console.log(receivedCode);
+	console.log(`[debugger] creating ${rubyTasks.length} Ruby task(s)`);
 	try {
-		instance.ccall('picorb_create_task', 'number', ['string'], [expandVfsRequires(receivedCode, data.vfs)]);
-		instance.picorubyDebugState.sessionStarted = true;
+		for (const task of rubyTasks) {
+			const code = expandVfsRequires(task.code, data.vfs, task.filename || '__entrypoint__.rb');
+			if (task.filename) {
+				instance.ccall('picorb_create_task_with_filename', 'number', ['string', 'string'], [code, task.filename]);
+			} else {
+				instance.ccall('picorb_create_task', 'number', ['string'], [code]);
+			}
+		}
+		instance.picorubyDebugState.sessionStarted = rubyTasks.length > 0;
 		if (typeof instance.picorubyResume === 'function') {
 			instance.picorubyResume();
 		}
@@ -773,6 +826,8 @@ if (typeof module !== 'undefined' && module.exports) {
 		normalizeVfsPath,
 		writeVfsToRuntime,
 		resolveVfsRequirePath,
+		resolveVfsScriptPath,
+		collectDebugRubyScripts,
 		expandVfsRequires
 	};
 }

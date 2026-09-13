@@ -125,6 +125,14 @@
 		return null;
 	}
 
+	function resolveVfsScriptPath(request, vfs) {
+		if (typeof request !== 'string') {
+			return null;
+		}
+
+		return resolveVfsRequirePath(request.split(/[?#]/, 1)[0], '__entrypoint__.rb', vfs);
+	}
+
 	// Recursively replaces local require statements with their VFS source code.
 	function expandVfsRequires(code, vfs, importerPath = '__entrypoint__.rb', loadedPaths = new Set()) {
 		if (!vfs || typeof vfs !== 'object') {
@@ -155,14 +163,19 @@
 	async function collectRubyScripts() {
 		const rubyScripts = document.querySelectorAll('script[type="text/ruby"], script[type="text/picoruby"]');
 		const taskPromises = Array.from(rubyScripts).map(async (script) => {
-			if (script.src) {
+			const sourceAttribute = script.getAttribute('src');
+			if (sourceAttribute) {
+				const vfsPath = resolveVfsScriptPath(sourceAttribute, global.__PICORUBY_VFS__);
+				if (vfsPath) {
+					return { code: global.__PICORUBY_VFS__[vfsPath], filename: vfsPath };
+				}
+
 				const response = await fetch(script.src);
 				if (!response.ok) {
 					throw new Error('Failed to load ' + script.src + ': ' + response.statusText);
 				}
 				const code = await response.text();
-				const filename = script.src.split('/').pop() || script.src;
-				return { code, filename };
+				return { code, filename: sourceAttribute };
 			}
 			return { code: script.textContent.trim(), filename: null };
 		});
@@ -187,7 +200,15 @@
 	}
 
 	const { default: createModule } = await import(global.__PICORUBY_MODULE_URL__);
-	const Module = await createModule({ wasmBinary: base64ToUint8Array(global.__PICORUBY_WASM_BASE64__) });
+	const wasmBinary = base64ToUint8Array(global.__PICORUBY_WASM_BASE64__);
+	const Module = await createModule({
+		instantiateWasm(imports, receiveInstance) {
+			WebAssembly.instantiate(wasmBinary, imports)
+				.then((result) => receiveInstance(result.instance))
+				.catch((error) => console.error('Failed to instantiate embedded PicoRuby WASM', error));
+			return {};
+		}
+	});
 	global.picorubyModule = Module;
 
 	Module.picorubyRun = function() {
@@ -234,10 +255,11 @@
 	try {
 		const rubyTasks = await collectRubyScripts();
 		rubyTasks.forEach((task) => {
+			const code = expandVfsRequires(task.code, global.__PICORUBY_VFS__, task.filename || '__entrypoint__.rb');
 			if (task.filename) {
-				Module.ccall('picorb_create_task_with_filename', 'number', ['string', 'string'], [task.code, task.filename]);
+				Module.ccall('picorb_create_task_with_filename', 'number', ['string', 'string'], [code, task.filename]);
 			} else {
-				Module.ccall('picorb_create_task', 'number', ['string'], [expandVfsRequires(task.code, global.__PICORUBY_VFS__)]);
+				Module.ccall('picorb_create_task', 'number', ['string'], [code]);
 			}
 		});
 	} catch (error) {

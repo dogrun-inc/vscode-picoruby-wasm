@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { collectVfsFiles, VfsMap } from './vfsCollector';
 
@@ -202,14 +202,47 @@ async function compileRubyToMrb(context: vscode.ExtensionContext, source: string
 	const sourcePath = path.join(temporaryDirectory, path.basename(filename) || 'entrypoint.rb');
 	const outputPath = path.join(temporaryDirectory, 'entrypoint.mrb');
 	const compilerPath = vscode.Uri.joinPath(context.extensionUri, 'assets', 'mrbc.js').fsPath;
+	const nodeExecutable = await resolveNodeExecutable();
 
 	try {
 		await writeFile(sourcePath, source, 'utf8');
-		await execFile(process.execPath, [compilerPath, '-o', outputPath, sourcePath]);
+		await execFile(nodeExecutable, [compilerPath,
+			'-o',
+			outputPath,
+			sourcePath
+		]);
 		return await readFile(outputPath);
 	} finally {
 		await rm(temporaryDirectory, { recursive: true, force: true });
 	}
+}
+
+async function resolveNodeExecutable(): Promise<string> {
+	if (!process.versions.electron) {
+		return process.execPath;
+	}
+
+	const candidates = [
+		process.env.npm_node_execpath,
+		process.env.NODE,
+		process.platform === 'win32'
+			? path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'nodejs', 'node.exe')
+			: 'node'
+	].filter((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0);
+
+	for (const candidate of candidates) {
+		try {
+			if (candidate === 'node') {
+				return candidate;
+			}
+			await access(candidate);
+			return candidate;
+		} catch {
+			continue;
+		}
+	}
+
+	return process.execPath;
 }
 
 /**

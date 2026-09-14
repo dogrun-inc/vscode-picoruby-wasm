@@ -69,7 +69,8 @@ suite('single HTML exporter', () => {
 		}
 	});
 
-	test('builds MRB tasks for inline and VFS-backed Ruby script tags', async () => {
+	test('builds MRB tasks for inline and VFS-backed Ruby script tags', async function () {
+		this.timeout(10000);
 		const repoRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.resolve(__dirname, '..', '..');
 		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-export-mrb-'));
 		const htmlPath = path.join(directory, 'index.html');

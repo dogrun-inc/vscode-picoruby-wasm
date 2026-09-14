@@ -53,7 +53,7 @@ async function exportPicoRubyHtml(
 		void vscode.window.showInformationMessage(`PicoRuby ${mode} HTML exported: ${outputPath}`);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
-		void vscode.window.showErrorMessage(`Failed to export PicoRuby single HTML: ${message}`);
+		void vscode.window.showErrorMessage(`Failed to export PicoRuby ${mode === 'mrb' ? 'MRB' : 'single'} HTML: ${message}`);
 	}
 }
 

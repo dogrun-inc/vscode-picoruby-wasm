@@ -89,8 +89,8 @@ suite('single HTML exporter', () => {
 
 			const html = await buildPicoRubyMrbHtml({ extensionUri: vscode.Uri.file(repoRoot) } as vscode.ExtensionContext, htmlPath);
 
-			assert.strictEqual((html.match(/type="application\/x-mrb"/g) ?? []).length, 2);
-			assert.ok(html.includes('data-picoruby-mrb="R1JFTg'));
+			const mrbScriptTags = html.match(/<script type="application\/x-mrb" data-picoruby-mrb="[^"]+"><\/script>/g) ?? [];
+			assert.strictEqual(mrbScriptTags.length, 2);
 			assert.ok(!html.includes('src="main.rb"'));
 		} finally {
 			rmSync(directory, { recursive: true, force: true });

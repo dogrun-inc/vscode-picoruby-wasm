@@ -242,6 +242,7 @@ suite('debug session adapter', () => {
 		const subscription = adapter.onDidSendMessage((message: any) => messages.push(message));
 
 		try {
+			adapter.state.showWebviewPanel = () => {};
 			// Provide an invalid program path directory that will cause collectVfsFiles to fail
 			const invalidProgramPath = path.join(os.tmpdir(), 'non-existent-dir-12345', 'index.html');
 			await adapter.state.launch({ program: invalidProgramPath });

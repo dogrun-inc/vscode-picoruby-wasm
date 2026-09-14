@@ -454,9 +454,19 @@ const moduleReady = loadPicorubyModule()
 			runtimeState.debugPollInterval = setInterval(pollDebugStatus, 200);
 		};
 
+		const stopDebugPolling = () => {
+			if (runtimeState.debugPollInterval !== null) {
+				clearInterval(runtimeState.debugPollInterval);
+				runtimeState.debugPollInterval = null;
+			}
+		};
+		instance.startDebugPolling = startDebugPolling;
+		instance.stopDebugPolling = stopDebugPolling;
+
 		instance.picorubyRun = function() {
 			const MRB_TICK_UNIT = 4;
 			const BATCH_DURATION = 16;
+			stopDebugPolling();
 			const IDLE_DELAY = 4;
 			const MAX_CATCHUP_TICKS = 10;
 			const runStepStatus = instance._mrb_run_step_status || function() {
@@ -548,13 +558,16 @@ const moduleReady = loadPicorubyModule()
 			}
 
 			instance.picorubyResume = () => {
+				if (!runtimeState.sessionStarted) {
+					return;
+				}
+
 				runtimeState.isPaused = false;
 				run();
 			};
 
 			run();
 		};
-		startDebugPolling();
 		console.log('PicoRuby WASM in WebView Loaded!');
 		vscode.postMessage({ type: 'ready' });
 		return instance;
@@ -802,20 +815,29 @@ window.addEventListener('message', async (event) => {
 	console.log(`[debugger] creating ${rubyTasks.length} Ruby task(s)`);
 	try {
 		for (const task of rubyTasks) {
+			console.log(`[debugger] creating Ruby task${task.filename ? ` from ${task.filename}` : ''}`);
 			const code = expandVfsRequires(task.code, data.vfs, task.filename || '__entrypoint__.rb');
 			if (task.filename) {
+				if (typeof instance._picorb_create_task_with_filename === 'undefined') {
+					throw new Error('picorb_create_task_with_filename is not exported by PicoRuby WASM');
+				}
+
 				instance.ccall('picorb_create_task_with_filename', 'number', ['string', 'string'], [code, task.filename]);
 			} else {
 				instance.ccall('picorb_create_task', 'number', ['string'], [code]);
 			}
 		}
 		instance.picorubyDebugState.sessionStarted = rubyTasks.length > 0;
-		if (typeof instance.picorubyResume === 'function') {
+			if (instance.picorubyDebugState.sessionStarted) {
+				instance.startDebugPolling();
+			}
+			if (instance.picorubyDebugState.sessionStarted && typeof instance.picorubyResume === 'function') {
 			instance.picorubyResume();
 		}
 	} catch (error) {
 		instance.picorubyDebugState.sessionStarted = false;
-		console.error('Failed to evaluate Ruby code in PicoRuby WASM', error);
+		const message = error instanceof Error ? error.message : String(error);
+		console.error('Failed to evaluate Ruby code in PicoRuby WASM', message);
 	}
 });
 

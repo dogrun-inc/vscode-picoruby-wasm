@@ -37,6 +37,84 @@ describe('webviewRuntime.js Test Suite', () => {
 			expect(webviewRuntime.stringifyLogValue('hello')).toBe('hello');
 			expect(webviewRuntime.stringifyLogValue({ key: 'value' })).toBe('{"key":"value"}');
 		});
+
+		test('normalizeVfsPath should accept relative Ruby paths and reject traversal', () => {
+			expect(webviewRuntime.normalizeVfsPath('./lib\\helper.rb')).toBe('lib/helper.rb');
+			expect(webviewRuntime.normalizeVfsPath('/main.rb')).toBe('main.rb');
+			expect(webviewRuntime.normalizeVfsPath('../secret.rb')).toBeNull();
+			expect(webviewRuntime.normalizeVfsPath('')).toBeNull();
+		});
+
+		test('writeVfsToRuntime should mount files under /work and chdir there', () => {
+			const calls = [];
+			const fs = {
+				mkdir: jest.fn((directoryPath) => calls.push(['mkdir', directoryPath])),
+				writeFile: jest.fn((filePath, content) => calls.push(['writeFile', filePath, content])),
+				chdir: jest.fn((directoryPath) => calls.push(['chdir', directoryPath]))
+			};
+
+			webviewRuntime.writeVfsToRuntime({ FS: fs }, {
+				'main.rb': 'require "lib/helper"',
+				'lib/helper.rb': 'VALUE = 1',
+				'../ignored.rb': 'ignored'
+			});
+
+			expect(fs.writeFile).toHaveBeenCalledWith('/work/main.rb', 'require "lib/helper"', { encoding: 'utf8' });
+			expect(fs.writeFile).toHaveBeenCalledWith('/work/lib/helper.rb', 'VALUE = 1', { encoding: 'utf8' });
+			expect(fs.writeFile).toHaveBeenCalledTimes(2);
+			expect(fs.chdir).toHaveBeenCalledWith('/work');
+			expect(calls).toContainEqual(['mkdir', '/work']);
+		});
+
+		test('expandVfsRequires should inline nested requires from subdirectories', () => {
+			const code = webviewRuntime.expandVfsRequires('require "main"', {
+				'main.rb': ['require "js"', 'require "./lib/message"', 'require "ui/status_view"', 'puts SampleMessage.line'].join('\n'),
+				'lib/message.rb': 'module SampleMessage\nend',
+				'ui/status_view.rb': 'class StatusView\nend'
+			});
+
+			expect(code).toContain('require "js"');
+			expect(code).toContain('module SampleMessage');
+			expect(code).toContain('class StatusView');
+			expect(code).toContain('puts SampleMessage.line');
+			expect(code).not.toContain('require "main"');
+			expect(code).not.toContain('require "./lib/message"');
+			expect(code).not.toContain('require "ui/status_view"');
+		});
+
+		test('collectDebugRubyScripts should resolve multiple src scripts from VFS in document order', () => {
+			const tasks = webviewRuntime.collectDebugRubyScripts(
+				[
+					'<script type="text/ruby" src="setup.rb"></script>',
+					'<script type="text/picoruby" src="lib/app.rb"></script>',
+					'<script type="text/ruby">puts "inline"</script>'
+				].join('\n'),
+				'puts "fallback"',
+				{
+					'setup.rb': 'puts "setup"',
+					'lib/app.rb': 'puts "app"'
+				}
+			);
+
+			expect(tasks).toEqual([
+				{ code: 'puts "setup"', filename: 'setup.rb' },
+				{ code: 'puts "app"', filename: 'lib/app.rb' },
+				{ code: 'puts "fallback"', filename: null }
+			]);
+		});
+
+		test('collectDebugRubyScripts should retain inline scripts after external scripts', () => {
+			const tasks = webviewRuntime.collectDebugRubyScripts(
+				'<script type="text/ruby" src="main.rb"></script><script type="text/ruby">puts "inline"</script>',
+				'',
+				{ 'main.rb': 'puts "external"' }
+			);
+
+			expect(tasks).toEqual([
+				{ code: 'puts "external"', filename: 'main.rb' },
+				{ code: 'puts "inline"', filename: null }
+			]);
+		});
 	});
 
 	describe('Status Polling & Notifications', () => {

@@ -99,7 +99,7 @@ describe('webviewRuntime.js Test Suite', () => {
 			expect(tasks).toEqual([
 				{ code: 'puts "setup"', filename: 'setup.rb' },
 				{ code: 'puts "app"', filename: 'lib/app.rb' },
-				{ code: 'puts "fallback"', filename: null }
+				{ code: 'puts "inline"', filename: null }
 			]);
 		});
 
@@ -114,6 +114,88 @@ describe('webviewRuntime.js Test Suite', () => {
 				{ code: 'puts "external"', filename: 'main.rb' },
 				{ code: 'puts "inline"', filename: null }
 			]);
+		});
+
+		test('collectDebugRubyScripts should use fallback code for .rb programs and inject markers', () => {
+			const tasks = webviewRuntime.collectDebugRubyScripts(
+				undefined,
+				'a = 1\nb = 2',
+				{},
+				{ programPath: 'main.rb', allBreakpoints: { 'main.rb': [2] } }
+			);
+
+			expect(tasks).toEqual([
+				{ code: 'a = 1\nputs "[vscode-debug-hit] path=main.rb,line=2"; binding.irb; b = 2', filename: null }
+			]);
+		});
+
+		test('injectBreakpointMarkers should prefix only injectable lines and keep line count', () => {
+			const result = webviewRuntime.injectBreakpointMarkers(
+				['puts "Line 1"', '# Comment line', 'else', 'x = 10'].join('\n'),
+				'lib/helper.rb',
+				[1, 2, 3, 4]
+			);
+			const lines = result.split('\n');
+
+			expect(lines).toHaveLength(4);
+			expect(lines[0]).toBe('puts "[vscode-debug-hit] path=lib/helper.rb,line=1"; binding.irb; puts "Line 1"');
+			expect(lines[1]).toBe('# Comment line');
+			expect(lines[2]).toBe('else');
+			expect(lines[3]).toBe('puts "[vscode-debug-hit] path=lib/helper.rb,line=4"; binding.irb; x = 10');
+		});
+
+		test('injectBreakpointsIntoVfs should inject markers before require expansion', () => {
+			const vfs = webviewRuntime.injectBreakpointsIntoVfs(
+				{
+					'main.rb': 'require "lib/helper"\nrun',
+					'lib/helper.rb': 'def run\n  puts "hi"\nend'
+				},
+				{ 'lib\\Helper.rb': [2], 'main.rb': [2] }
+			);
+
+			expect(vfs['lib/helper.rb']).toBe(
+				'def run\nputs "[vscode-debug-hit] path=lib/helper.rb,line=2"; binding.irb;   puts "hi"\nend'
+			);
+
+			const expanded = webviewRuntime.expandVfsRequires(vfs['main.rb'], vfs, 'main.rb');
+			expect(expanded).toContain('path=lib/helper.rb,line=2');
+			expect(expanded).toContain('path=main.rb,line=2"; binding.irb; run');
+			expect(expanded).not.toContain('require "lib/helper"');
+		});
+
+		test('collectDebugRubyScripts should map inline HTML script lines to original HTML lines', () => {
+			const html = [
+				'<html>',
+				'<body>',
+				'<script type="text/ruby">',
+				'a = 1',
+				'b = 2',
+				'</script>',
+				'<script type="text/picoruby">c = 3</script>',
+				'</body>',
+				'</html>'
+			].join('\n');
+
+			const tasks = webviewRuntime.collectDebugRubyScripts(html, '', {}, {
+				programPath: 'index.html',
+				allBreakpoints: { 'index.html': [5, 7] }
+			});
+
+			expect(tasks).toHaveLength(2);
+			expect(tasks[0].filename).toBeNull();
+			expect(tasks[0].code.split('\n')).toEqual([
+				'',
+				'a = 1',
+				'puts "[vscode-debug-hit] path=index.html,line=5"; binding.irb; b = 2',
+				''
+			]);
+			expect(tasks[1].code).toBe('puts "[vscode-debug-hit] path=index.html,line=7"; binding.irb; c = 3');
+		});
+
+		test('findBreakpointLines should match paths case-insensitively and drop invalid lines', () => {
+			expect(webviewRuntime.findBreakpointLines({ 'Lib/Helper.rb': [3, 0, 'x', 5] }, 'lib/helper.rb')).toEqual([3, 5]);
+			expect(webviewRuntime.findBreakpointLines({ 'lib/helper.rb': [3] }, 'other.rb')).toEqual([]);
+			expect(webviewRuntime.findBreakpointLines(null, 'lib/helper.rb')).toEqual([]);
 		});
 	});
 

@@ -280,6 +280,109 @@ const resolveVfsScriptPath = (request, vfs) => {
 };
 
 /**
+ * Prefix of the stdout line emitted right before an injected binding.irb pauses execution.
+ * The extension host intercepts this line to map the stop back to the original file/line.
+ */
+const DEBUG_HIT_MARKER = '[vscode-debug-hit]';
+
+/**
+ * Returns whether a source line can safely receive a breakpoint prefix.
+ * Mirrors isInjectableBreakpointLine in src/debug/session.ts.
+ * @param {unknown} sourceLine Raw source line.
+ * @returns {boolean} false for comments, blank lines, and continuation keywords.
+ */
+const isInjectableBreakpointLine = (sourceLine) => {
+	if (typeof sourceLine !== 'string') {
+		return false;
+	}
+
+	const trimmed = sourceLine.trimStart();
+	if (trimmed.length === 0 || trimmed.startsWith('#')) {
+		return false;
+	}
+
+	return !/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed);
+};
+
+/**
+ * Looks up breakpoint lines for a source path, ignoring separator and case differences.
+ * @param {unknown} allBreakpoints Map of VFS-relative paths to 1-based line numbers.
+ * @param {unknown} sourcePath VFS-relative source path.
+ * @returns {number[]} Valid breakpoint lines, or an empty array.
+ */
+const findBreakpointLines = (allBreakpoints, sourcePath) => {
+	if (!allBreakpoints || typeof allBreakpoints !== 'object' || typeof sourcePath !== 'string') {
+		return [];
+	}
+
+	const wanted = sourcePath.toLowerCase();
+	for (const [rawPath, lines] of Object.entries(allBreakpoints)) {
+		const normalized = normalizeVfsPath(rawPath);
+		if (normalized && normalized.toLowerCase() === wanted && Array.isArray(lines)) {
+			return lines.filter((line) => Number.isInteger(line) && line > 0);
+		}
+	}
+
+	return [];
+};
+
+/**
+ * Builds the Ruby statement that reports the original location and then pauses.
+ * @param {string} sourcePath Path reported in the marker.
+ * @param {number} line 1-based line reported in the marker.
+ * @returns {string} Semicolon-terminated Ruby statement.
+ */
+const createBreakpointStatement = (sourcePath, line) => {
+	const escapedPath = sourcePath.replace(/[\\"#]/g, '\\$&');
+	return `puts "${DEBUG_HIT_MARKER} path=${escapedPath},line=${line}"; binding.irb;`;
+};
+
+/**
+ * Prefixes breakpoint lines with a location marker and binding.irb.
+ * The prefix stays on the same line so the expanded script keeps its line count.
+ * @param {string} code Ruby source text.
+ * @param {string} sourcePath Path reported in the marker.
+ * @param {number[]} lines 1-based line numbers in the original document.
+ * @param {number} lineOffset Original document line of code line 1, minus 1.
+ * @returns {string} Ruby source with markers injected.
+ */
+const injectBreakpointMarkers = (code, sourcePath, lines, lineOffset = 0) => {
+	if (typeof code !== 'string' || !Array.isArray(lines) || lines.length === 0) {
+		return code;
+	}
+
+	const targets = new Set(lines);
+	return code.split('\n').map((line, index) => {
+		const originalLine = index + 1 + lineOffset;
+		if (!targets.has(originalLine) || !isInjectableBreakpointLine(line)) {
+			return line;
+		}
+
+		return `${createBreakpointStatement(sourcePath, originalLine)} ${line}`;
+	}).join('\n');
+};
+
+/**
+ * Injects breakpoint markers into every VFS entry before require expansion.
+ * @param {object} vfs Map of VFS paths to source text.
+ * @param {object} allBreakpoints Map of VFS-relative paths to 1-based line numbers.
+ * @returns {object} New VFS map with markers injected.
+ */
+const injectBreakpointsIntoVfs = (vfs, allBreakpoints) => {
+	if (!vfs || typeof vfs !== 'object') {
+		return vfs;
+	}
+
+	const result = {};
+	for (const [rawPath, content] of Object.entries(vfs)) {
+		const vfsPath = normalizeVfsPath(rawPath) ?? rawPath;
+		result[rawPath] = injectBreakpointMarkers(content, vfsPath, findBreakpointLines(allBreakpoints, vfsPath));
+	}
+
+	return result;
+};
+
+/**
  * Recursively expands local require statements before Ruby task creation.
  * @param {string} code Ruby source to expand.
  * @param {object} vfs Map of VFS paths to source text.
@@ -313,35 +416,62 @@ const expandVfsRequires = (code, vfs, importerPath = '__entrypoint__.rb', loaded
 	}).join('\n');
 };
 
+/** Matches `<script ...>...</script>` pairs; group 1 is the attribute text, group 2 the content. */
+const SCRIPT_TAG_PATTERN = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+/** Matches a Ruby script type attribute inside a script tag's attribute text. */
+const RUBY_SCRIPT_TYPE_PATTERN = /\btype\s*=\s*["']?(?:text\/ruby|text\/picoruby)\b/i;
+/** Matches a src attribute inside a script tag's attribute text (quoted or bare). */
+const SCRIPT_SRC_PATTERN = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
+
 /**
  * Collects all Ruby script tags from the debug HTML and resolves local src files from VFS.
+ * Inline scripts receive breakpoint markers using their original HTML line numbers, so the
+ * raw HTML (not a CSS-inlined copy) must be passed for accurate mapping.
  * @param {unknown} html Debug HTML sent by the extension host.
- * @param {string} fallbackCode First inline script after breakpoint injection.
- * @param {object} vfs Map of VFS paths to source text.
+ * @param {string} fallbackCode Program source used when no HTML is available (.rb programs).
+ * @param {object} vfs Map of VFS paths to source text (already marker-injected).
+ * @param {{ programPath?: string|null, allBreakpoints?: object }} debugOptions Marker injection settings.
  * @returns {Array<{ code: string, filename: string | null }>} Ruby task sources in document order.
  */
-const collectDebugRubyScripts = (html, fallbackCode, vfs) => {
+const collectDebugRubyScripts = (html, fallbackCode, vfs, debugOptions = {}) => {
+	const programPath = typeof debugOptions.programPath === 'string' ? debugOptions.programPath : null;
+	const programBreakpoints = programPath ? findBreakpointLines(debugOptions.allBreakpoints, programPath) : [];
+	const injectProgramMarkers = (code, lineOffset) =>
+		programPath ? injectBreakpointMarkers(code, programPath, programBreakpoints, lineOffset) : code;
+
 	if (typeof html !== 'string') {
-		return fallbackCode.length > 0 ? [{ code: fallbackCode, filename: null }] : [];
+		return fallbackCode.length > 0 ? [{ code: injectProgramMarkers(fallbackCode, 0), filename: null }] : [];
 	}
 
-	const document = new DOMParser().parseFromString(html, 'text/html');
-	let usedFallbackCode = false;
-	return Array.from(document.querySelectorAll('script[type="text/ruby"], script[type="text/picoruby"]'))
-		.map((script) => {
-			const sourceAttribute = script.getAttribute('src');
-			if (sourceAttribute) {
-				const vfsPath = resolveVfsScriptPath(sourceAttribute, vfs);
-				return vfsPath ? { code: vfs[vfsPath], filename: vfsPath } : null;
-			}
+	const tasks = [];
+	const pattern = new RegExp(SCRIPT_TAG_PATTERN.source, 'gi');
+	let match;
+	while ((match = pattern.exec(html)) !== null) {
+		const [, attributes, content] = match;
+		if (!RUBY_SCRIPT_TYPE_PATTERN.test(attributes)) {
+			continue;
+		}
 
-			const code = !usedFallbackCode && fallbackCode.length > 0
-				? fallbackCode
-				: script.textContent || '';
-			usedFallbackCode = usedFallbackCode || fallbackCode.length > 0;
-			return code.trim().length > 0 ? { code, filename: null } : null;
-		})
-		.filter((task) => task !== null);
+		const srcMatch = SCRIPT_SRC_PATTERN.exec(attributes);
+		if (srcMatch) {
+			const vfsPath = resolveVfsScriptPath(srcMatch[1] ?? srcMatch[2] ?? srcMatch[3], vfs);
+			if (vfsPath) {
+				tasks.push({ code: vfs[vfsPath], filename: vfsPath });
+			}
+			continue;
+		}
+
+		if (content.trim().length === 0) {
+			continue;
+		}
+
+		// Content starts right after `<script` + attributes + `>`.
+		const contentStartIndex = match.index + '<script'.length + attributes.length + 1;
+		const lineOffset = (html.slice(0, contentStartIndex).match(/\n/g) || []).length;
+		tasks.push({ code: injectProgramMarkers(content, lineOffset), filename: null });
+	}
+
+	return tasks;
 };
 
 /**
@@ -798,9 +928,18 @@ window.addEventListener('message', async (event) => {
     }
 
 	const instance = await moduleReady;
-	ensurePicorubyInitialized(instance, data.vfs);
+	const allBreakpoints = data.allBreakpoints && typeof data.allBreakpoints === 'object' ? data.allBreakpoints : {};
+	const programPath = typeof data.programPath === 'string' ? data.programPath : null;
+	// Inject markers into each VFS file before any require expansion so original lines are preserved.
+	const debugVfs = injectBreakpointsIntoVfs(data.vfs, allBreakpoints);
+	ensurePicorubyInitialized(instance, debugVfs);
 	const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
-	const rubyTasks = collectDebugRubyScripts(data.html, receivedCode, data.vfs);
+	const rubyTasks = collectDebugRubyScripts(
+		typeof data.sourceHtml === 'string' ? data.sourceHtml : data.html,
+		receivedCode,
+		debugVfs,
+		{ programPath, allBreakpoints }
+	);
 	const runtimeBreakpoints = Array.isArray(data.breakpoints)
 		? data.breakpoints.filter((line) => Number.isInteger(line) && line > 0)
 		: instance.picorubyDebugState.breakpoints;
@@ -816,7 +955,7 @@ window.addEventListener('message', async (event) => {
 	try {
 		for (const task of rubyTasks) {
 			console.log(`[debugger] creating Ruby task${task.filename ? ` from ${task.filename}` : ''}`);
-			const code = expandVfsRequires(task.code, data.vfs, task.filename || '__entrypoint__.rb');
+			const code = expandVfsRequires(task.code, debugVfs, task.filename || '__entrypoint__.rb');
 			if (task.filename) {
 				if (typeof instance._picorb_create_task_with_filename === 'undefined') {
 					throw new Error('picorb_create_task_with_filename is not exported by PicoRuby WASM');
@@ -850,6 +989,9 @@ if (typeof module !== 'undefined' && module.exports) {
 		resolveVfsRequirePath,
 		resolveVfsScriptPath,
 		collectDebugRubyScripts,
-		expandVfsRequires
+		expandVfsRequires,
+		injectBreakpointMarkers,
+		injectBreakpointsIntoVfs,
+		findBreakpointLines
 	};
 }

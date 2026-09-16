@@ -160,6 +160,11 @@ function formatWebviewLogOutput(text: string): string {
 }
 
 /**
+ * Matches the marker emitted by WebView-injected breakpoints right before binding.irb pauses.
+ */
+const DEBUG_HIT_MARKER_PATTERN = /^\[vscode-debug-hit\] path=(.+),line=(\d+)$/;
+
+/**
  * Builds the HTML content for the WebView.
  *
  * @param webview Target WebView instance that will host the HTML.
@@ -265,6 +270,8 @@ class PicoRubyWasmMockSessionState {
 	private pendingStartCode: string | undefined;
 	/** HTML content waiting to be sent to the WebView runtime for DOM rendering. */
 	private pendingStartHtml: string | undefined;
+	/** Unmodified HTML source used by the WebView to map inline script lines to editor lines. */
+	private pendingStartSourceHtml: string | undefined;
 	/** Ruby files waiting to be mounted into the WebView runtime VFS. */
 	private pendingStartVfs: VfsMap | undefined;
 	/** Pending requests for webview mapped by their request ID. */
@@ -273,6 +280,14 @@ class PicoRubyWasmMockSessionState {
 	private scriptStartLine = 1;
 	/** Pending breakpoints mapped by their normalized file path. */
 	private breakpointsByPath = new Map<string, number[]>();
+	/** Original-case source paths mapped by their normalized breakpoint key. */
+	private breakpointSourcePaths = new Map<string, string>();
+	/** Absolute source path reported by the latest debug-hit marker, consumed by the next stop. */
+	private lastHitPath: string | undefined;
+	/** 1-based line reported by the latest debug-hit marker, consumed by the next stop. */
+	private lastHitLine: number | undefined;
+	/** Absolute source path used for stackTrace responses. Falls back to the active program. */
+	private currentSourcePath: string | undefined;
 
 	/** Retrieves the breakpoints configured for the currently active program. */
 	private get configuredBreakpoints(): number[] {
@@ -322,6 +337,9 @@ class PicoRubyWasmMockSessionState {
 	async launch(args: PicoRubyWasmLaunchArguments): Promise<{ output: string }> {
 		this.activeProgram = this.resolveProgramPath(args.program, args.cwd);
 		this.currentLine = 1;
+		this.currentSourcePath = undefined;
+		this.lastHitPath = undefined;
+		this.lastHitLine = undefined;
 
 		const [vfs, code] = await Promise.all([
 			collectVfsFiles(this.activeProgram).catch((error: unknown) => {
@@ -355,9 +373,14 @@ class PicoRubyWasmMockSessionState {
 	reset(): Promise<void> {
 		this.pendingStartCode = undefined;
 		this.pendingStartHtml = undefined;
+		this.pendingStartSourceHtml = undefined;
 		this.pendingStartVfs = undefined;
 		this.activeProgramLines = [];
 		this.breakpointsByPath.clear();
+		this.breakpointSourcePaths.clear();
+		this.lastHitPath = undefined;
+		this.lastHitLine = undefined;
+		this.currentSourcePath = undefined;
 		this.scriptStartLine = 1;
 		this.currentLine = 1;
 		this.pendingRequests.clear();
@@ -434,16 +457,69 @@ class PicoRubyWasmMockSessionState {
 	 * @param lines 1-based line numbers.
      */
     updateBreakpoints(sourcePath: string | undefined, lines: number[]): void {
-		const key = path.normalize(sourcePath ?? this.activeProgram).toLowerCase();
+		const normalizedPath = path.normalize(sourcePath ?? this.activeProgram);
+		const key = normalizedPath.toLowerCase();
         const validLines = Array.from(
             new Set(lines.filter((line) => Number.isInteger(line) && line > 0))
         ).sort((left, right) => left - right);
 
         // Save the valid lines for the given source path
         this.breakpointsByPath.set(key, validLines);
+		this.breakpointSourcePaths.set(key, normalizedPath);
 
         this.postBreakpointsIfReady();
     }
+
+	/**
+	 * Converts all configured breakpoints into a WebView-friendly map keyed by VFS-relative path.
+	 * Sources outside the program directory cannot be resolved by the WebView and are omitted.
+	 *
+	 * @returns Map of POSIX-style relative paths (e.g. `lib/helper.rb`, `index.html`) to 1-based lines.
+	 */
+	createAllBreakpointsPayload(): Record<string, number[]> {
+		const rootDirectory = path.dirname(this.activeProgram);
+		const payload: Record<string, number[]> = {};
+
+		for (const [key, lines] of this.breakpointsByPath) {
+			if (lines.length === 0) {
+				continue;
+			}
+
+			const sourcePath = this.breakpointSourcePaths.get(key) ?? key;
+			const relativePath = path.relative(rootDirectory, sourcePath);
+			if (relativePath.length === 0 || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+				continue;
+			}
+
+			payload[relativePath.split(path.sep).join('/')] = [...lines];
+		}
+
+		return payload;
+	}
+
+	/**
+	 * Records the location reported by a `[vscode-debug-hit]` marker so the next stop can use it.
+	 *
+	 * @param text Log text received from the WebView.
+	 * @returns true when the text was a marker and should be hidden from the Debug Console.
+	 */
+	captureDebugHit(text: string): boolean {
+		const match = DEBUG_HIT_MARKER_PATTERN.exec(text.trim());
+		if (!match) {
+			return false;
+		}
+
+		const line = Number.parseInt(match[2], 10);
+		if (!Number.isInteger(line) || line <= 0) {
+			return false;
+		}
+
+		const resolvedPath = path.resolve(path.dirname(this.activeProgram), match[1].trim());
+		const key = path.normalize(resolvedPath).toLowerCase();
+		this.lastHitPath = this.breakpointSourcePaths.get(key) ?? resolvedPath;
+		this.lastHitLine = line;
+		return true;
+	}
 
 	/**
 	 * Resolves source lines used to validate breakpoint positions.
@@ -496,35 +572,6 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
-	 * Injects binding.irb into the configured Ruby source lines.
-	 *
-	 * @param sourceCode Ruby source code.
-	 * @param breakpoints 1-based line numbers from VS Code (HTML line numbers).
-	 * @returns Ruby source code with debugger bindings injected.
-	 */
-	injectBindingIrb(sourceCode: string, breakpoints: number[]): string {
-		const lines = sourceCode.split('\n');
-		const offset = this.scriptStartLine - 1;
-
-		const rubyBreakpoints = new Set(
-			breakpoints
-				.map((htmlLine) => htmlLine - offset)
-				.filter((line) => Number.isInteger(line) && line > 0)
-		);
-
-		for (let index = 0; index < lines.length; index += 1) {
-			const lineNumber = index + 1; // 1-based Ruby line number corresponding to the current index
-			if (!rubyBreakpoints.has(lineNumber) || !this.isInjectableBreakpointLine(lineNumber, lines)) {
-				continue;
-			}
-
-			lines[index] = `binding.irb; ${lines[index]}`;
-		}
-
-		return lines.join('\n');
-	}
-
-	/**
 	 * Disposes the current WebView panel and clears its reference.
 	 */
 	private disposeWebviewPanel(): void {
@@ -567,21 +614,7 @@ class PicoRubyWasmMockSessionState {
 			}
 
 			if (receivedMessage.type === 'stopped') {
-				const reason =
-					receivedMessage.reason === 'breakpoint' || receivedMessage.reason === 'entry'
-						? receivedMessage.reason
-						: 'breakpoint';
-				let line =
-					typeof receivedMessage.line === 'number' && Number.isInteger(receivedMessage.line) && receivedMessage.line > 0
-						? receivedMessage.line
-						: undefined;
-						
-				// Adjust the line number to html file line number.
-				if (line !== undefined) {
-					line = line + (this.scriptStartLine - 1);
-					this.currentLine = line;
-				}
-				this.onRuntimeStopped?.(reason, line);
+				this.handleWebviewStopped(receivedMessage);
 				return;
 			}
 
@@ -594,12 +627,47 @@ class PicoRubyWasmMockSessionState {
 				return;
 			}
 
-			this.onWebviewLog?.(this.stringifyWebviewMessage(receivedMessage.text));
+			const logText = this.stringifyWebviewMessage(receivedMessage.text);
+			if (this.captureDebugHit(logText)) {
+				return;
+			}
+
+			this.onWebviewLog?.(logText);
 		});
 		this.webviewPanel.onDidDispose(() => {
 			this.webviewPanel = undefined;
 			this.webviewReady = false;
 		});
+	}
+
+	/**
+	 * Handles a runtime stop reported by the WebView and resolves the position to report to VS Code.
+	 * A preceding `[vscode-debug-hit]` marker takes priority over the runtime line, which refers to the
+	 * require-expanded script rather than the original file.
+	 *
+	 * @param message Incoming stopped message from the WebView.
+	 */
+	handleWebviewStopped(message: PicoRubyWasmIncomingMessage): void {
+		const reason = message.reason === 'breakpoint' || message.reason === 'entry' ? message.reason : 'breakpoint';
+		let line =
+			typeof message.line === 'number' && Number.isInteger(message.line) && message.line > 0
+				? message.line
+				: undefined;
+
+		if (this.lastHitPath !== undefined && this.lastHitLine !== undefined) {
+			line = this.lastHitLine;
+			this.currentLine = line;
+			this.currentSourcePath = this.lastHitPath;
+			this.lastHitPath = undefined;
+			this.lastHitLine = undefined;
+		} else if (line !== undefined) {
+			// Adjust the line number to html file line number.
+			line = line + (this.scriptStartLine - 1);
+			this.currentLine = line;
+			this.currentSourcePath = this.activeProgram;
+		}
+
+		this.onRuntimeStopped?.(reason, line);
 	}
 
 	/**
@@ -644,19 +712,24 @@ class PicoRubyWasmMockSessionState {
 			return;
 		}
 
-		const code = this.injectBindingIrb(this.pendingStartCode, this.configuredBreakpoints);
+		const code = this.pendingStartCode;
 		const html = this.pendingStartHtml;
+		const sourceHtml = this.pendingStartSourceHtml;
 		const vfs = this.pendingStartVfs ?? {};
 		this.pendingStartCode = undefined;
 		this.pendingStartHtml = undefined;
+		this.pendingStartSourceHtml = undefined;
 		this.pendingStartVfs = undefined;
 
 		void this.webviewPanel.webview.postMessage({
 			type: 'start',
 			code,
 			html,
+			sourceHtml,
 			vfs,
-			breakpoints: this.configuredBreakpoints
+			programPath: path.basename(this.activeProgram),
+			breakpoints: this.configuredBreakpoints,
+			allBreakpoints: this.createAllBreakpointsPayload()
 		});
 	}
 
@@ -686,6 +759,7 @@ class PicoRubyWasmMockSessionState {
 			const content = await readFile(programPath, 'utf8');
 			
 			if (programPath.toLowerCase().endsWith('.html') || programPath.toLowerCase().endsWith('.htm')) {
+				this.pendingStartSourceHtml = content;
 				this.pendingStartHtml = await this.inlineExternalCss(content, programPath);
 				
 				const lines = content.split('\n');
@@ -719,6 +793,7 @@ class PicoRubyWasmMockSessionState {
 
 			this.scriptStartLine = 1; // if it's .rb files and so on, it is always 1.
 			this.pendingStartHtml = undefined;
+			this.pendingStartSourceHtml = undefined;
 			return content;
 		} catch (error: unknown) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -761,6 +836,7 @@ class PicoRubyWasmMockSessionState {
 	 * @returns A single frame pointing to the active program.
 	 */
 	createStackFrames(): PicoRubyWasmStackFrame[] {
+		const sourcePath = this.currentSourcePath ?? this.activeProgram;
 		return [
 			{
 				id: 1,
@@ -768,8 +844,8 @@ class PicoRubyWasmMockSessionState {
 				line: this.currentLine,
 				column: 1,
 				source: {
-					name: path.basename(this.activeProgram),
-					path: this.activeProgram
+					name: path.basename(sourcePath),
+					path: sourcePath
 				}
 			}
 		];

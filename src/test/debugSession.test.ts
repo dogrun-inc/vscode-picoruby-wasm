@@ -94,23 +94,59 @@ suite('debug session adapter', () => {
 		assert.strictEqual(messages[1].event, 'initialized');
 	});
 
-	test('injects binding.irb only on injectable breakpoint lines', () => {
+	test('converts breakpoints into VFS-relative allBreakpoints payload', () => {
 		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
-		const sourceCode = [
-			'puts "Line 1"',
-			'# Comment line',
-			'else',
-			'x = 10'
-		].join('\n');
+		const root = path.resolve(os.tmpdir(), 'picoruby-project');
 
 		try {
-			const result = adapter.state.injectBindingIrb(sourceCode, [1, 2, 3, 4]);
+			adapter.state.activeProgram = path.join(root, 'index.html');
+			adapter.state.updateBreakpoints(path.join(root, 'lib', 'Helper.rb'), [3, 5]);
+			adapter.state.updateBreakpoints(path.join(root, 'index.html'), [12]);
+			adapter.state.updateBreakpoints(path.join(root, 'empty.rb'), []);
+			adapter.state.updateBreakpoints(path.resolve(root, '..', 'outside.rb'), [1]);
 
-			assert.ok(result.includes('binding.irb; puts "Line 1"'));
-			assert.ok(result.includes('# Comment line'));
-			assert.ok(!result.includes('binding.irb; else'));
-			assert.ok(result.includes('binding.irb; x = 10'));
+			assert.deepStrictEqual(adapter.state.createAllBreakpointsPayload(), {
+				'lib/Helper.rb': [3, 5],
+				'index.html': [12]
+			});
 		} finally {
+			adapter.dispose();
+		}
+	});
+
+	test('routes debug-hit markers to the original file and line on the next stop', () => {
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+		const root = path.resolve(os.tmpdir(), 'picoruby-project');
+		const helperPath = path.join(root, 'lib', 'Helper.rb');
+		const messages: DebugMessage[] = [];
+		const subscription = adapter.onDidSendMessage((message: any) => messages.push(message));
+
+		try {
+			adapter.state.activeProgram = path.join(root, 'index.html');
+			adapter.state.updateBreakpoints(helperPath, [4]);
+
+			assert.strictEqual(adapter.state.captureDebugHit('regular output'), false);
+			assert.strictEqual(adapter.state.captureDebugHit('[vscode-debug-hit] path=lib/helper.rb,line=4'), true);
+			assert.strictEqual(adapter.state.lastHitPath, helperPath);
+			assert.strictEqual(adapter.state.lastHitLine, 4);
+
+			// Runtime line 120 refers to the expanded script; the marker position must win.
+			adapter.state.handleWebviewStopped({ type: 'stopped', reason: 'breakpoint', line: 120 });
+
+			const stopped = messages.find((message) => message.type === 'event' && message.event === 'stopped');
+			assert.strictEqual(stopped?.body?.line, 4);
+			const [frame] = adapter.state.createStackFrames();
+			assert.strictEqual(frame.line, 4);
+			assert.strictEqual(frame.source.path, helperPath);
+			assert.strictEqual(frame.source.name, 'Helper.rb');
+
+			// Without a fresh marker, the next stop falls back to the active program position.
+			adapter.state.handleWebviewStopped({ type: 'stopped', reason: 'breakpoint', line: 7 });
+			const [fallbackFrame] = adapter.state.createStackFrames();
+			assert.strictEqual(fallbackFrame.line, 7);
+			assert.strictEqual(fallbackFrame.source.path, adapter.state.activeProgram);
+		} finally {
+			subscription.dispose();
 			adapter.dispose();
 		}
 	});

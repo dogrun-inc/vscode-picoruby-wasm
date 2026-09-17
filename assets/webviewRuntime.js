@@ -620,6 +620,7 @@ const moduleReady = loadPicorubyModule()
 			terminatedNotified: false,
 			sessionStarted: false,
 			lastProgressTime: performance.now(),
+			stopReason: 'breakpoint',
 			sourceMaps: []
 		};
 		instance.picorubyDebugState = runtimeState;
@@ -637,9 +638,11 @@ const moduleReady = loadPicorubyModule()
 			const mapped = line !== undefined && runtimeState.sourceMaps.length === 1
 				? runtimeState.sourceMaps[0][line]
 				: undefined;
+			const reason = runtimeState.stopReason;
+			runtimeState.stopReason = 'breakpoint';
 			vscode.postMessage({
 				type: 'stopped',
-				reason: 'breakpoint',
+				reason,
 				line,
 				sourcePath: typeof mapped?.path === 'string' ? mapped.path : undefined,
 				sourceLine: mapped && typeof mapped.path === 'string' ? mapped.line : undefined
@@ -859,6 +862,21 @@ window.addEventListener('message', async (event) => {
 		}
 	};
 
+	const armSteppingFlag = (instance) => {
+		if (typeof instance.ccall !== 'function' || typeof instance._mrb_debug_eval_in_binding === 'undefined') {
+			console.log('[debugger] mrb_debug_eval_in_binding is unavailable; step behaves like continue');
+			return false;
+		}
+
+		try {
+			instance.ccall('mrb_debug_eval_in_binding', 'string', ['string'], ['$PicoRubyDebug.stepping = true']);
+			return true;
+		} catch (error) {
+			console.log('[debugger] failed to arm stepping flag', error);
+			return false;
+		}
+	};
+
 	if (data?.type === 'setBreakpoints') {
 		const instance = await moduleReady;
 		instance.picorubyDebugState.breakpoints = Array.isArray(data.breakpoints)
@@ -869,19 +887,16 @@ window.addEventListener('message', async (event) => {
 
 	if (data?.type === 'continue') {
 		const instance = await moduleReady;
+		instance.picorubyDebugState.stopReason = 'breakpoint';
 		executeDebugCommand(instance, 'mrb_debug_continue', '_mrb_debug_continue');
 		return;
 	}
 
-	if (data?.type === 'next') {
+	if (data?.type === 'step') {
 		const instance = await moduleReady;
-		executeDebugCommand(instance, 'mrb_debug_next', '_mrb_debug_next');
-		return;
-	}
-
-	if (data?.type === 'stepIn') {
-		const instance = await moduleReady;
-		executeDebugCommand(instance, 'mrb_debug_step', '_mrb_debug_step');
+		// Arm $PicoRubyDebug so the next trace hook pauses, then leave the current irb session.
+		instance.picorubyDebugState.stopReason = armSteppingFlag(instance) ? 'step' : 'breakpoint';
+		executeDebugCommand(instance, 'mrb_debug_continue', '_mrb_debug_continue');
 		return;
 	}
 
@@ -981,6 +996,7 @@ window.addEventListener('message', async (event) => {
 				result = toEvaluationResultString(globalsData[`$${expression}`]);
 			} else if (!foundInLocals && typeof instance.ccall === 'function') {
 				const nativeEvaluateCandidates = [
+					{ command: 'mrb_debug_eval_in_binding', exportName: '_mrb_debug_eval_in_binding' },
 					{ command: 'mrb_debug_eval', exportName: '_mrb_debug_eval' },
 					{ command: 'mrb_debug_evaluate', exportName: '_mrb_debug_evaluate' }
 				];
@@ -1070,6 +1086,7 @@ window.addEventListener('message', async (event) => {
 	instance.picorubyDebugState.sessionStarted = false;
 	instance.picorubyDebugState.lastProgressTime = performance.now();
 	instance.picorubyDebugState.breakpoints = runtimeBreakpoints;
+	instance.picorubyDebugState.stopReason = 'breakpoint';
 	instance.picorubyDebugState.sourceMaps = [];
 
 	console.log('Received start command from VS Code.');

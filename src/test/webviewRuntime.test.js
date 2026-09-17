@@ -262,20 +262,16 @@ describe('webviewRuntime.js Test Suite', () => {
 	});
 
 	describe('Command Dispatcher', () => {
-		test('should invoke handler when receiving "next" message from VS Code', async () => {
+		test('should invoke handler when receiving "step" message from VS Code', async () => {
 			const event = new MessageEvent('message', {
-				data: { type: 'next' }
+				data: { type: 'step' }
 			});
 			window.dispatchEvent(event);
-			await Promise.resolve();
-		});
+			await flushAsyncEvents();
 
-		test('should invoke handler when receiving "stepIn" message', async () => {
-			const event = new MessageEvent('message', {
-				data: { type: 'stepIn' }
-			});
-			window.dispatchEvent(event);
-			await Promise.resolve();
+			// Test module lacks mrb_debug_eval_in_binding, so step degrades to continue without throwing.
+			expect(mockPostMessage.mock.calls.map((args) => args[0]))
+				.toContainEqual({ type: 'log', text: '[debugger] mrb_debug_eval_in_binding is unavailable; step behaves like continue' });
 		});
 
 		test('should invoke handler when receiving "continue" message', async () => {

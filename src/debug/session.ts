@@ -123,7 +123,16 @@ interface PicoRubyWasmIncomingMessage {
 	text?: unknown;
 	reason?: unknown;
 	line?: unknown;
+	/** VFS-relative path resolved by the WebView source map (fallback when no marker was seen). */
+	sourcePath?: unknown;
+	/** Original 1-based line resolved by the WebView source map. */
+	sourceLine?: unknown;
 }
+
+/**
+ * Stop reasons reported to VS Code via the DAP stopped event.
+ */
+type PicoRubyWasmStopReason = 'entry' | 'breakpoint' | 'step';
 
 /**
  * Returns the extension root URI.
@@ -253,7 +262,7 @@ class PicoRubyWasmMockSessionState {
 	/** Callback used to forward logs received from the WebView. */
 	private readonly onWebviewLog: ((text: string) => void) | undefined;
 	/** Callback used to notify the adapter that runtime entered paused state. */
-	private readonly onRuntimeStopped: ((reason: 'entry' | 'breakpoint', line?: number) => void) | undefined;
+	private readonly onRuntimeStopped: ((reason: PicoRubyWasmStopReason, line?: number) => void) | undefined;
 	/** Callback used to notify the adapter that runtime execution has terminated. */
 	private readonly onRuntimeTerminated: (() => void) | undefined;
 	/** Absolute path to the currently active program. */
@@ -300,7 +309,7 @@ class PicoRubyWasmMockSessionState {
 	 */
 	constructor(
 		onWebviewLog?: (text: string) => void,
-		onRuntimeStopped?: (reason: 'entry' | 'breakpoint', line?: number) => void,
+		onRuntimeStopped?: (reason: PicoRubyWasmStopReason, line?: number) => void,
 		onRuntimeTerminated?: () => void
 	) {
 		this.onWebviewLog = onWebviewLog;
@@ -396,17 +405,11 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
-	 * Requests the WebView runtime to execute one step-over operation.
+	 * Requests the WebView runtime to run until the next instrumented line.
+	 * Step over, step in, and step out all map to this single-line step.
 	 */
-	nextRuntime(): void {
-		this.postControlMessage('next');
-	}
-
-	/**
-	 * Requests the WebView runtime to execute one step-in operation.
-	 */
-	stepInRuntime(): void {
-		this.postControlMessage('stepIn');
+	stepRuntime(): void {
+		this.postControlMessage('step');
 	}
 
 	/**
@@ -414,7 +417,7 @@ class PicoRubyWasmMockSessionState {
 	 *
 	 * @param type Control message type.
 	 */
-	private postControlMessage(type: 'continue' | 'next' | 'stepIn' | 'terminate'): void {
+	private postControlMessage(type: 'continue' | 'step' | 'terminate'): void {
 		if (!this.webviewPanel) {
 			this.onWebviewLog?.(`[adapter] dropped '${type}' command: webview panel not available`);
 			return;
@@ -514,11 +517,21 @@ class PicoRubyWasmMockSessionState {
 			return false;
 		}
 
-		const resolvedPath = path.resolve(path.dirname(this.activeProgram), match[1].trim());
-		const key = path.normalize(resolvedPath).toLowerCase();
-		this.lastHitPath = this.breakpointSourcePaths.get(key) ?? resolvedPath;
+		this.lastHitPath = this.resolveRuntimeSourcePath(match[1]);
 		this.lastHitLine = line;
 		return true;
+	}
+
+	/**
+	 * Resolves a VFS-relative path reported by the WebView to the editor's absolute path.
+	 *
+	 * @param relativePath Path relative to the program directory.
+	 * @returns Absolute path, preferring the original-case path seen in setBreakpoints.
+	 */
+	private resolveRuntimeSourcePath(relativePath: string): string {
+		const resolvedPath = path.resolve(path.dirname(this.activeProgram), relativePath.trim());
+		const key = path.normalize(resolvedPath).toLowerCase();
+		return this.breakpointSourcePaths.get(key) ?? resolvedPath;
 	}
 
 	/**
@@ -648,11 +661,13 @@ class PicoRubyWasmMockSessionState {
 	 * @param message Incoming stopped message from the WebView.
 	 */
 	handleWebviewStopped(message: PicoRubyWasmIncomingMessage): void {
-		const reason = message.reason === 'breakpoint' || message.reason === 'entry' ? message.reason : 'breakpoint';
-		let line =
-			typeof message.line === 'number' && Number.isInteger(message.line) && message.line > 0
-				? message.line
-				: undefined;
+		const reason: PicoRubyWasmStopReason =
+			message.reason === 'breakpoint' || message.reason === 'entry' || message.reason === 'step'
+				? message.reason
+				: 'breakpoint';
+		const isValidLine = (value: unknown): value is number =>
+			typeof value === 'number' && Number.isInteger(value) && value > 0;
+		let line = isValidLine(message.line) ? message.line : undefined;
 
 		if (this.lastHitPath !== undefined && this.lastHitLine !== undefined) {
 			line = this.lastHitLine;
@@ -660,6 +675,11 @@ class PicoRubyWasmMockSessionState {
 			this.currentSourcePath = this.lastHitPath;
 			this.lastHitPath = undefined;
 			this.lastHitLine = undefined;
+		} else if (typeof message.sourcePath === 'string' && isValidLine(message.sourceLine)) {
+			// WebView translated the combined-script line through its source map.
+			line = message.sourceLine;
+			this.currentLine = line;
+			this.currentSourcePath = this.resolveRuntimeSourcePath(message.sourcePath);
 		} else if (line !== undefined) {
 			// Adjust the line number to html file line number.
 			line = line + (this.scriptStartLine - 1);
@@ -1096,7 +1116,7 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 * @param response DAP response object.
 	 */
 	protected nextRequest(response: any): void {
-		this.state.nextRuntime();
+		this.state.stepRuntime();
 		this.sendResponse(response);
 	}
 
@@ -1106,7 +1126,17 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 * @param response DAP response object.
 	 */
 	protected stepInRequest(response: any): void {
-		this.state.stepInRuntime();
+		this.state.stepRuntime();
+		this.sendResponse(response);
+	}
+
+	/**
+	 * Handles DAP stepOut requests.
+	 *
+	 * @param response DAP response object.
+	 */
+	protected stepOutRequest(response: any): void {
+		this.state.stepRuntime();
 		this.sendResponse(response);
 	}
 
@@ -1384,23 +1414,15 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				});
 				return;
 			case 'next':
-				this.state.nextRuntime();
-				this.emit({
-					type: 'response',
-					seq: this.nextMessageSeq(),
-					request_seq: message.seq,
-					success: true,
-					command: 'next'
-				});
-				return;
 			case 'stepIn':
-				this.state.stepInRuntime();
+			case 'stepOut':
+				this.state.stepRuntime();
 				this.emit({
 					type: 'response',
 					seq: this.nextMessageSeq(),
 					request_seq: message.seq,
 					success: true,
-					command: 'stepIn'
+					command: message.command
 				});
 				return;
 			case 'setBreakpoints': {

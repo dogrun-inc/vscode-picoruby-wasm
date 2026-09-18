@@ -97,9 +97,9 @@ describe('webviewRuntime.js Test Suite', () => {
 			);
 
 			expect(tasks).toEqual([
-				{ code: 'puts "setup"', filename: 'setup.rb' },
-				{ code: 'puts "app"', filename: 'lib/app.rb' },
-				{ code: 'puts "fallback"', filename: null }
+				{ code: 'puts "setup"', filename: 'setup.rb', sourcePath: 'setup.rb', lineOffset: 0 },
+				{ code: 'puts "app"', filename: 'lib/app.rb', sourcePath: 'lib/app.rb', lineOffset: 0 },
+				{ code: 'puts "inline"', filename: null, sourcePath: null, lineOffset: 2 }
 			]);
 		});
 
@@ -107,13 +107,133 @@ describe('webviewRuntime.js Test Suite', () => {
 			const tasks = webviewRuntime.collectDebugRubyScripts(
 				'<script type="text/ruby" src="main.rb"></script><script type="text/ruby">puts "inline"</script>',
 				'',
-				{ 'main.rb': 'puts "external"' }
+				{ 'main.rb': 'puts "external"' },
+				{ programPath: 'index.html' }
 			);
 
 			expect(tasks).toEqual([
-				{ code: 'puts "external"', filename: 'main.rb' },
-				{ code: 'puts "inline"', filename: null }
+				{ code: 'puts "external"', filename: 'main.rb', sourcePath: 'main.rb', lineOffset: 0 },
+				{ code: 'puts "inline"', filename: null, sourcePath: 'index.html', lineOffset: 0 }
 			]);
+		});
+
+		test('collectDebugRubyScripts should use fallback code for .rb programs', () => {
+			const tasks = webviewRuntime.collectDebugRubyScripts(undefined, 'a = 1\nb = 2', {}, { programPath: 'main.rb' });
+
+			expect(tasks).toEqual([{ code: 'a = 1\nb = 2', filename: null, sourcePath: 'main.rb', lineOffset: 0 }]);
+		});
+
+		test('collectDebugRubyScripts should record inline HTML script line offsets', () => {
+			const html = [
+				'<html>',
+				'<body>',
+				'<script type="text/ruby">',
+				'a = 1',
+				'b = 2',
+				'</script>',
+				'<script type="text/picoruby">c = 3</script>',
+				'</body>',
+				'</html>'
+			].join('\n');
+
+			const tasks = webviewRuntime.collectDebugRubyScripts(html, '', {}, { programPath: 'index.html' });
+
+			expect(tasks).toEqual([
+				{ code: '\na = 1\nb = 2\n', filename: null, sourcePath: 'index.html', lineOffset: 2 },
+				{ code: 'c = 3', filename: null, sourcePath: 'index.html', lineOffset: 6 }
+			]);
+		});
+
+		test('expandVfsRequireLines should build a source map across expanded requires', () => {
+			const { lines, entries } = webviewRuntime.expandVfsRequireLines(
+				'require "lib/helper"\nrun',
+				{ 'lib/helper.rb': 'def run\n  puts "hi"\nend' },
+				'main.rb',
+				'main.rb',
+				0,
+				new Set()
+			);
+
+			expect(lines).toEqual(['def run', '  puts "hi"', 'end', 'run']);
+			expect(entries).toEqual([
+				{ path: 'lib/helper.rb', line: 1 },
+				{ path: 'lib/helper.rb', line: 2 },
+				{ path: 'lib/helper.rb', line: 3 },
+				{ path: 'main.rb', line: 2 }
+			]);
+		});
+
+		test('instrumentDebugLines should add trace hooks, mark breakpoints, and skip unsafe lines', () => {
+			const lines = [
+				'def run(a,',
+				'        b)',
+				'  x = [1,',
+				'       2]',
+				'  # comment',
+				'  if x.any?',
+				'    puts "yes"',
+				'  else',
+				'    puts "no"',
+				'  end',
+				'  text = <<~EOS',
+				'    heredoc body',
+				'  EOS',
+				'  items.each do |item|',
+				'    item.',
+				'      to_s',
+				'  end',
+				'end'
+			];
+			const entries = lines.map((_, index) => ({ path: 'lib/helper.rb', line: index + 1 }));
+
+			const result = webviewRuntime.instrumentDebugLines(lines, entries, { 'lib/helper.rb': [7] });
+
+			expect(result).toHaveLength(lines.length);
+			expect(result[0]).toBe('binding.irb if $PicoRubyDebug.trace("lib/helper.rb", 1); def run(a,');
+			expect(result[1]).toBe('        b)');
+			expect(result[2]).toBe('binding.irb if $PicoRubyDebug.trace("lib/helper.rb", 3);   x = [1,');
+			expect(result[3]).toBe('       2]');
+			expect(result[4]).toBe('  # comment');
+			expect(result[5]).toBe('binding.irb if $PicoRubyDebug.trace("lib/helper.rb", 6);   if x.any?');
+			expect(result[6]).toBe('binding.irb if $PicoRubyDebug.trace("lib/helper.rb", 7, true);     puts "yes"');
+			expect(result[7]).toBe('  else');
+			expect(result[8]).toBe('binding.irb if $PicoRubyDebug.trace("lib/helper.rb", 9);     puts "no"');
+			expect(result[9]).toBe('  end');
+			expect(result[10]).toBe('binding.irb if $PicoRubyDebug.trace("lib/helper.rb", 11);   text = <<~EOS');
+			expect(result[11]).toBe('    heredoc body');
+			expect(result[12]).toBe('  EOS');
+			expect(result[13]).toBe('binding.irb if $PicoRubyDebug.trace("lib/helper.rb", 14);   items.each do |item|');
+			expect(result[14]).toBe('binding.irb if $PicoRubyDebug.trace("lib/helper.rb", 15);     item.');
+			expect(result[15]).toBe('      to_s');
+			expect(result[16]).toBe('  end');
+			expect(result[17]).toBe('end');
+		});
+
+		test('buildDebugTaskCode should prepend the prelude and offset the source map', () => {
+			const { code, sourceMap } = webviewRuntime.buildDebugTaskCode(
+				{ code: 'require "lib/helper"\nrun', filename: null, sourcePath: 'index.html', lineOffset: 10 },
+				{ 'lib/helper.rb': 'def run\nend' },
+				{ 'index.html': [12] }
+			);
+			const lines = code.split('\n');
+
+			expect(lines[0]).toBe(webviewRuntime.DEBUG_PRELUDE);
+			expect(lines[0]).toContain('$PicoRubyDebug ||= PicoRubyDebugClass.new');
+			expect(lines[0]).toContain('puts "[vscode-debug-hit] path=#{path},line=#{line}"');
+			expect(lines[1]).toBe('binding.irb if $PicoRubyDebug.trace("lib/helper.rb", 1); def run');
+			expect(lines[2]).toBe('end');
+			expect(lines[3]).toBe('binding.irb if $PicoRubyDebug.trace("index.html", 12, true); run');
+			expect(sourceMap).toEqual({
+				2: { path: 'lib/helper.rb', line: 1 },
+				3: { path: 'lib/helper.rb', line: 2 },
+				4: { path: 'index.html', line: 12 }
+			});
+		});
+
+		test('findBreakpointLines should match paths case-insensitively and drop invalid lines', () => {
+			expect(webviewRuntime.findBreakpointLines({ 'Lib/Helper.rb': [3, 0, 'x', 5] }, 'lib/helper.rb')).toEqual([3, 5]);
+			expect(webviewRuntime.findBreakpointLines({ 'lib/helper.rb': [3] }, 'other.rb')).toEqual([]);
+			expect(webviewRuntime.findBreakpointLines(null, 'lib/helper.rb')).toEqual([]);
 		});
 	});
 
@@ -142,20 +262,16 @@ describe('webviewRuntime.js Test Suite', () => {
 	});
 
 	describe('Command Dispatcher', () => {
-		test('should invoke handler when receiving "next" message from VS Code', async () => {
+		test('should invoke handler when receiving "step" message from VS Code', async () => {
 			const event = new MessageEvent('message', {
-				data: { type: 'next' }
+				data: { type: 'step' }
 			});
 			window.dispatchEvent(event);
-			await Promise.resolve();
-		});
+			await flushAsyncEvents();
 
-		test('should invoke handler when receiving "stepIn" message', async () => {
-			const event = new MessageEvent('message', {
-				data: { type: 'stepIn' }
-			});
-			window.dispatchEvent(event);
-			await Promise.resolve();
+			// Test module lacks mrb_debug_eval_in_binding, so step degrades to continue without throwing.
+			expect(mockPostMessage.mock.calls.map((args) => args[0]))
+				.toContainEqual({ type: 'log', text: '[debugger] mrb_debug_eval_in_binding is unavailable; step behaves like continue' });
 		});
 
 		test('should invoke handler when receiving "continue" message', async () => {

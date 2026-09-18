@@ -94,23 +94,72 @@ suite('debug session adapter', () => {
 		assert.strictEqual(messages[1].event, 'initialized');
 	});
 
-	test('injects binding.irb only on injectable breakpoint lines', () => {
+	test('converts breakpoints into VFS-relative allBreakpoints payload', () => {
 		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
-		const sourceCode = [
-			'puts "Line 1"',
-			'# Comment line',
-			'else',
-			'x = 10'
-		].join('\n');
+		const root = path.resolve(os.tmpdir(), 'picoruby-project');
 
 		try {
-			const result = adapter.state.injectBindingIrb(sourceCode, [1, 2, 3, 4]);
+			adapter.state.activeProgram = path.join(root, 'index.html');
+			adapter.state.updateBreakpoints(path.join(root, 'lib', 'Helper.rb'), [3, 5]);
+			adapter.state.updateBreakpoints(path.join(root, 'index.html'), [12]);
+			adapter.state.updateBreakpoints(path.join(root, 'empty.rb'), []);
+			adapter.state.updateBreakpoints(path.resolve(root, '..', 'outside.rb'), [1]);
 
-			assert.ok(result.includes('binding.irb; puts "Line 1"'));
-			assert.ok(result.includes('# Comment line'));
-			assert.ok(!result.includes('binding.irb; else'));
-			assert.ok(result.includes('binding.irb; x = 10'));
+			assert.deepStrictEqual(adapter.state.createAllBreakpointsPayload(), {
+				'lib/Helper.rb': [3, 5],
+				'index.html': [12]
+			});
 		} finally {
+			adapter.dispose();
+		}
+	});
+
+	test('routes debug-hit markers to the original file and line on the next stop', () => {
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+		const root = path.resolve(os.tmpdir(), 'picoruby-project');
+		const helperPath = path.join(root, 'lib', 'Helper.rb');
+		const messages: DebugMessage[] = [];
+		const subscription = adapter.onDidSendMessage((message: any) => messages.push(message));
+
+		try {
+			adapter.state.activeProgram = path.join(root, 'index.html');
+			adapter.state.updateBreakpoints(helperPath, [4]);
+
+			assert.strictEqual(adapter.state.captureDebugHit('regular output'), false);
+			assert.strictEqual(adapter.state.captureDebugHit('[vscode-debug-hit] path=lib/helper.rb,line=4'), true);
+			assert.strictEqual(adapter.state.lastHitPath, helperPath);
+			assert.strictEqual(adapter.state.lastHitLine, 4);
+
+			// Runtime line 120 refers to the expanded script; the marker position must win.
+			adapter.state.handleWebviewStopped({ type: 'stopped', reason: 'step', line: 120 });
+
+			const stopped = messages.find((message) => message.type === 'event' && message.event === 'stopped');
+			assert.strictEqual(stopped?.body?.line, 4);
+			assert.strictEqual(stopped?.body?.reason, 'step');
+			const [frame] = adapter.state.createStackFrames();
+			assert.strictEqual(frame.line, 4);
+			assert.strictEqual(frame.source.path, helperPath);
+			assert.strictEqual(frame.source.name, 'Helper.rb');
+
+			// Without a marker, a WebView source-map translation is used next.
+			adapter.state.handleWebviewStopped({
+				type: 'stopped',
+				reason: 'breakpoint',
+				line: 30,
+				sourcePath: 'lib/helper.rb',
+				sourceLine: 9
+			});
+			const [mappedFrame] = adapter.state.createStackFrames();
+			assert.strictEqual(mappedFrame.line, 9);
+			assert.strictEqual(mappedFrame.source.path, helperPath);
+
+			// Without either, the stop falls back to the active program position.
+			adapter.state.handleWebviewStopped({ type: 'stopped', reason: 'breakpoint', line: 7 });
+			const [fallbackFrame] = adapter.state.createStackFrames();
+			assert.strictEqual(fallbackFrame.line, 7);
+			assert.strictEqual(fallbackFrame.source.path, adapter.state.activeProgram);
+		} finally {
+			subscription.dispose();
 			adapter.dispose();
 		}
 	});
@@ -283,25 +332,27 @@ suite('debug session adapter', () => {
 		assert.strictEqual(nextMessages[0].event, 'output');
 		assert.ok(
 			typeof nextMessages[0].body?.output === 'string' &&
-			nextMessages[0].body.output.includes("dropped 'next' command")
+			nextMessages[0].body.output.includes("dropped 'step' command")
 		);
 		assert.strictEqual(nextMessages[1].type, 'response');
 		assert.strictEqual(nextMessages[1].command, 'next');
 		assert.strictEqual(nextMessages[1].success, true);
 		assert.strictEqual(nextMessages[1].body, undefined);
 
-		const stepInMessages = collectMessages('stepIn');
-		assert.strictEqual(stepInMessages.length, 2);
-		assert.strictEqual(stepInMessages[0].type, 'event');
-		assert.strictEqual(stepInMessages[0].event, 'output');
-		assert.ok(
-			typeof stepInMessages[0].body?.output === 'string' &&
-			stepInMessages[0].body.output.includes("dropped 'stepIn' command")
-		);
-		assert.strictEqual(stepInMessages[1].type, 'response');
-		assert.strictEqual(stepInMessages[1].command, 'stepIn');
-		assert.strictEqual(stepInMessages[1].success, true);
-		assert.strictEqual(stepInMessages[1].body, undefined);
+		for (const command of ['stepIn', 'stepOut'] as const) {
+			const stepMessages = collectMessages(command);
+			assert.strictEqual(stepMessages.length, 2);
+			assert.strictEqual(stepMessages[0].type, 'event');
+			assert.strictEqual(stepMessages[0].event, 'output');
+			assert.ok(
+				typeof stepMessages[0].body?.output === 'string' &&
+				stepMessages[0].body.output.includes("dropped 'step' command")
+			);
+			assert.strictEqual(stepMessages[1].type, 'response');
+			assert.strictEqual(stepMessages[1].command, command);
+			assert.strictEqual(stepMessages[1].success, true);
+			assert.strictEqual(stepMessages[1].body, undefined);
+		}
 	});
 
 	test('terminate and disconnect emit a terminated event before responding', () => {

@@ -369,8 +369,8 @@ const DEBUG_PRELUDE = [
 const CONTINUATION_START_PATTERN = /^(?:\.|&\.|&&|\|\||\)|\]|\}|\||(?:else|elsif|when|in|rescue|ensure|end|then|do|and|or)\b)/;
 /** A previous line ending with these tokens means the current line continues its statement. */
 const CONTINUATION_END_PATTERN = /(?:[,\\(\[{.=]|&&|\|\||[-+*\/%<>]|\b(?:and|or|not))$/;
-/** Heredoc opener; group 2 is the terminator identifier. */
-const HEREDOC_START_PATTERN = /<<[~-]?(['"`]?)([A-Z_][A-Z0-9_]*)\1/;
+/** Heredoc opener; group 2 is the terminator identifier (any case, e.g. `<<~eof`). */
+const HEREDOC_START_PATTERN = /<<[~-]?(['"`]?)([A-Za-z_]\w*)\1/;
 
 /**
  * Prefixes each executable combined line with a `$PicoRubyDebug.trace` hook.
@@ -531,10 +531,10 @@ const buildDebugTaskCode = (task, vfs, allBreakpoints) => {
 
 /** Matches `<script ...>...</script>` pairs; group 1 is the attribute text, group 2 the content. */
 const SCRIPT_TAG_PATTERN = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
-/** Matches a Ruby script type attribute inside a script tag's attribute text. */
-const RUBY_SCRIPT_TYPE_PATTERN = /\btype\s*=\s*["']?(?:text\/ruby|text\/picoruby)\b/i;
-/** Matches a src attribute inside a script tag's attribute text (quoted or bare). */
-const SCRIPT_SRC_PATTERN = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
+/** Matches a Ruby script type attribute; anchored so `data-type` does not match. */
+const RUBY_SCRIPT_TYPE_PATTERN = /(?:^|\s)type\s*=\s*["']?(?:text\/ruby|text\/picoruby)\b/i;
+/** Matches a src attribute (quoted or bare); anchored so `data-src` does not match. */
+const SCRIPT_SRC_PATTERN = /(?:^|\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
 
 /**
  * Collects all Ruby script tags from the debug HTML and resolves local src files from VFS.

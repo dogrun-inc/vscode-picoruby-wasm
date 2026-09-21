@@ -144,6 +144,34 @@ describe('webviewRuntime.js Test Suite', () => {
 			]);
 		});
 
+		test('collectDebugRubyScripts should ignore data-type and data-src attributes', () => {
+			const html = [
+				'<script data-type="text/ruby">not_ruby()</script>',
+				'<script type="text/ruby" data-src="missing.rb">puts "inline"</script>',
+				'<script type="text/javascript">js()</script>'
+			].join('\n');
+
+			const tasks = webviewRuntime.collectDebugRubyScripts(html, '', { 'missing.rb': 'puts "external"' }, { programPath: 'index.html' });
+
+			expect(tasks).toEqual([
+				{ code: 'puts "inline"', filename: null, sourcePath: 'index.html', lineOffset: 1 }
+			]);
+		});
+
+		test('instrumentDebugLines should skip lowercase heredoc bodies', () => {
+			const lines = ['text = <<~eof', '  body line', 'eof', 'puts text'];
+			const entries = lines.map((_, index) => ({ path: 'main.rb', line: index + 1 }));
+
+			const result = webviewRuntime.instrumentDebugLines(lines, entries, {});
+
+			expect(result).toEqual([
+				'binding.irb if $PicoRubyDebug.trace("main.rb", 1); text = <<~eof',
+				'  body line',
+				'eof',
+				'binding.irb if $PicoRubyDebug.trace("main.rb", 4); puts text'
+			]);
+		});
+
 		test('expandVfsRequireLines should build a source map across expanded requires', () => {
 			const { lines, entries } = webviewRuntime.expandVfsRequireLines(
 				'require "lib/helper"\nrun',

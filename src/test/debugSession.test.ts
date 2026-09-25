@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { createPicoRubyWasmInlineDebugAdapter } from '../debug/session';
+import { createPicoRubyWasmInlineDebugAdapter, picoRubyWasmWebviewTestHooks } from '../debug/session';
 
 type DebugMessage = {
 	type: 'response' | 'event';
@@ -268,6 +268,76 @@ suite('debug session adapter', () => {
 				false,
 				true
 			]);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test('rejects breakpoints on lines the WebView instrumentation skips', () => {
+		const lines = [
+			'def run(a,',
+			'        b)',
+			'  x = [1,',
+			'       2]',
+			'  # comment',
+			'  if x.any?',
+			'    puts "yes"',
+			'  else',
+			'    puts "no"',
+			'  end',
+			'  text = <<~eof',
+			'    heredoc body',
+			'  eof',
+			'  items.each do |item|',
+			'    item.',
+			'      to_s',
+			'  end',
+			'end',
+			'=begin',
+			'block comment',
+			'=end',
+			'puts "after"',
+			'__END__',
+			'data'
+		];
+
+		const eligible = picoRubyWasmWebviewTestHooks.computeInjectableBreakpointLines(lines, false);
+
+		// Matches the expectations of the instrumentDebugLines Jest test.
+		assert.deepStrictEqual([...eligible].sort((left, right) => left - right), [1, 3, 6, 7, 9, 11, 14, 15, 22]);
+	});
+
+	test('verifies HTML breakpoints only inside inline PicoRuby script blocks', () => {
+		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-debug-'));
+		const sourcePath = path.join(directory, 'index.html');
+		writeFileSync(
+			sourcePath,
+			[
+				'<html>',
+				'<body>',
+				'<script type="text/ruby" src="main.rb"></script>',
+				'<script type="text/ruby">',
+				'a = 1',
+				'b = [1,',
+				'     2]',
+				'</script>',
+				'<script type="text/picoruby">c = 3</script>',
+				'</body>',
+				'</html>'
+			].join('\n')
+		);
+
+		try {
+			const messages = collectMessages('setBreakpoints', {
+				source: { path: sourcePath },
+				breakpoints: Array.from({ length: 11 }, (_, index) => ({ line: index + 1 }))
+			});
+			const response = messages.find((message) => message.type === 'response' && message.command === 'setBreakpoints');
+			const verifiedLines = response?.body?.breakpoints
+				.filter((breakpoint: { verified: boolean }) => breakpoint.verified)
+				.map((breakpoint: { line: number }) => breakpoint.line);
+
+			assert.deepStrictEqual(verifiedLines, [5, 6, 9]);
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}

@@ -173,6 +173,128 @@ function formatWebviewLogOutput(text: string): string {
  */
 const DEBUG_HIT_MARKER_PATTERN = /^\[vscode-debug-hit\] path=(.+),line=(\d+)$/;
 
+/*
+ * Line-eligibility rules below mirror instrumentDebugLines in assets/webviewRuntime.js.
+ * Keep both in sync so a verified breakpoint always has a trace hook.
+ */
+/** Lines starting with these tokens continue a previous statement or close a construct. */
+const CONTINUATION_START_PATTERN = /^(?:\.|&\.|&&|\|\||\)|\]|\}|\||(?:else|elsif|when|in|rescue|ensure|end|then|do|and|or)\b)/;
+/** A previous line ending with these tokens means the current line continues its statement. */
+const CONTINUATION_END_PATTERN = /(?:[,\\(\[{.=]|&&|\|\||[-+*\/%<>]|\b(?:and|or|not))$/;
+/** Heredoc opener; group 2 is the terminator identifier. */
+const HEREDOC_START_PATTERN = /<<[~-]?(['"`]?)([A-Za-z_]\w*)\1/;
+/** Opening tag of an inline PicoRuby script block in HTML. */
+const RUBY_SCRIPT_OPEN_PATTERN = /<script\b[^>]*\btype=["'](?:text\/ruby|text\/picoruby)["'][^>]*>/i;
+/** Closing script tag. */
+const SCRIPT_CLOSE_PATTERN = /<\/script\s*>/i;
+
+/**
+ * Computes the 1-based lines of a Ruby document that the WebView would instrument with a trace hook.
+ * Comments, blank lines, closing keywords, continuation lines, heredoc bodies, =begin blocks and
+ * everything after __END__ are excluded.
+ *
+ * @param lines Ruby source lines.
+ * @param offset Added to each index to produce the reported line number.
+ * @param eligible Set that receives eligible line numbers.
+ */
+function collectInjectableRubyLines(lines: string[], offset: number, eligible: Set<number>): void {
+	let previousCode = '';
+	let heredocTerminator: string | null = null;
+	let inBlockComment = false;
+
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index];
+		const trimmed = line.trim();
+
+		if (heredocTerminator !== null) {
+			if (trimmed === heredocTerminator) {
+				heredocTerminator = null;
+			}
+			continue;
+		}
+		if (inBlockComment) {
+			inBlockComment = !/^=end\b/.test(line);
+			continue;
+		}
+		if (/^=begin\b/.test(line)) {
+			inBlockComment = true;
+			continue;
+		}
+		if (trimmed === '__END__') {
+			return;
+		}
+
+		const injectable =
+			trimmed.length > 0 &&
+			!trimmed.startsWith('#') &&
+			!CONTINUATION_START_PATTERN.test(trimmed) &&
+			!CONTINUATION_END_PATTERN.test(previousCode);
+
+		const heredoc = HEREDOC_START_PATTERN.exec(trimmed);
+		if (heredoc) {
+			heredocTerminator = heredoc[2];
+		}
+		if (trimmed.length > 0 && !trimmed.startsWith('#')) {
+			previousCode = trimmed.replace(/\s#.*$/, '').trimEnd();
+		}
+
+		if (injectable) {
+			eligible.add(index + 1 + offset);
+		}
+	}
+}
+
+/**
+ * Computes breakpoint-eligible lines for a source document.
+ * For HTML, only lines inside inline `<script type="text/ruby">` blocks are considered; each block
+ * is scanned independently, matching how the WebView creates one task per script.
+ *
+ * @param sourceLines Document lines.
+ * @param isHtml Whether the document is an HTML entrypoint.
+ * @returns Set of 1-based eligible line numbers.
+ */
+function computeInjectableBreakpointLines(sourceLines: string[], isHtml: boolean): Set<number> {
+	const eligible = new Set<number>();
+	if (!isHtml) {
+		collectInjectableRubyLines(sourceLines, 0, eligible);
+		return eligible;
+	}
+
+	let blockStart = -1;
+	let block: string[] = [];
+	for (let index = 0; index < sourceLines.length; index += 1) {
+		const line = sourceLines[index];
+		if (blockStart < 0) {
+			const open = RUBY_SCRIPT_OPEN_PATTERN.exec(line);
+			if (!open || /\bsrc\s*=/i.test(open[0])) {
+				continue;
+			}
+			blockStart = index;
+			const rest = line.slice(open.index + open[0].length);
+			const close = SCRIPT_CLOSE_PATTERN.exec(rest);
+			if (close) {
+				collectInjectableRubyLines([rest.slice(0, close.index)], blockStart, eligible);
+				blockStart = -1;
+				continue;
+			}
+			block = [rest];
+			continue;
+		}
+
+		const close = SCRIPT_CLOSE_PATTERN.exec(line);
+		if (close) {
+			block.push(line.slice(0, close.index));
+			collectInjectableRubyLines(block, blockStart, eligible);
+			blockStart = -1;
+			block = [];
+			continue;
+		}
+		block.push(line);
+	}
+
+	return eligible;
+}
+
 /**
  * Builds the HTML content for the WebView.
  *
@@ -215,7 +337,8 @@ function createPicoRubyWasmWebviewHtmlWithExtensionUri(webview: vscode.Webview, 
  * Public test hook to call WebView HTML generation directly from unit tests.
  */
 export const picoRubyWasmWebviewTestHooks = {
-	createPicoRubyWasmWebviewHtmlWithExtensionUri
+	createPicoRubyWasmWebviewHtmlWithExtensionUri,
+	computeInjectableBreakpointLines
 };
 
 /**
@@ -535,53 +658,44 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
-	 * Resolves source lines used to validate breakpoint positions.
+	 * Resolves the set of breakpoint-eligible lines for a source file using the same rules as the
+	 * WebView trace instrumentation.
 	 *
 	 * @param sourcePath Source path from DAP setBreakpoints request.
-	 * @returns Source lines, or undefined when source cannot be resolved.
+	 * @returns Eligible 1-based lines, or undefined when source cannot be resolved.
 	 */
-	resolveBreakpointValidationLines(sourcePath: string | undefined): string[] | undefined {
+	resolveInjectableBreakpointLines(sourcePath: string | undefined): Set<number> | undefined {
 		if (typeof sourcePath === 'string' && sourcePath.length > 0) {
 			try {
-				return readFileSync(sourcePath, 'utf8').split('\n');
+				return computeInjectableBreakpointLines(
+					readFileSync(sourcePath, 'utf8').split('\n'),
+					/\.html?$/i.test(sourcePath)
+				);
 			} catch {
 				// Fall back to active program lines below.
 			}
 		}
 
 		if (this.activeProgramLines.length > 0) {
-			return this.activeProgramLines;
+			// activeProgramLines already hold the extracted Ruby, so they are never scanned as HTML.
+			return computeInjectableBreakpointLines(this.activeProgramLines, false);
 		}
 
 		return undefined;
 	}
 
 	/**
-	 * Returns whether a source line can safely receive "binding.irb; " injection.
+	 * Returns whether a breakpoint line will receive a trace hook in the WebView.
 	 *
 	 * @param line 1-based source line number.
-	 * @returns false for comments, empty lines, and control-flow keywords that would break Ruby syntax when prepended.
+	 * @param eligibleLines Result of resolveInjectableBreakpointLines; undefined accepts any positive line.
 	 */
-	isInjectableBreakpointLine(line: number, sourceLines: string[] | undefined): boolean {
+	isInjectableBreakpointLine(line: number, eligibleLines: Set<number> | undefined): boolean {
 		if (!Number.isInteger(line) || line <= 0) {
 			return false;
 		}
 
-		if (sourceLines === undefined) {
-			return true;
-		}
-
-		const sourceLine = sourceLines[line - 1];
-		if (typeof sourceLine !== 'string') {
-			return false;
-		}
-
-		const trimmed = sourceLine.trimStart();
-		if (trimmed.length === 0 || trimmed.startsWith('#')) {
-			return false;
-		}
-
-		return !/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed);
+		return eligibleLines === undefined || eligibleLines.has(line);
 	}
 
 	/**
@@ -1153,7 +1267,7 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
         const requested = Array.isArray(args?.breakpoints) ? args.breakpoints : [];
         const sourcePath = typeof args?.source?.path === 'string' ? args.source.path : undefined;
 
-		const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
+		const validationLines = this.state.resolveInjectableBreakpointLines(sourcePath);
 		const acceptedLines = requested
 			.map((bp) => bp?.line)
 			.filter(
@@ -1434,7 +1548,7 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
                         ? message.arguments.source.path
                         : undefined;
 
-				const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
+				const validationLines = this.state.resolveInjectableBreakpointLines(sourcePath);
 				const acceptedLines = requested
 					.map((bp: { line?: number; column?: number }) => bp?.line)
 					.filter(

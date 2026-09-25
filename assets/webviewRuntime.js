@@ -365,6 +365,10 @@ const DEBUG_PRELUDE = [
 	'$PicoRubyDebug ||= PicoRubyDebugClass.new'
 ].join('; ');
 
+/*
+ * Line-eligibility rules below are mirrored by computeInjectableBreakpointLines in src/debug/session.ts
+ * for breakpoint verification. Keep both in sync.
+ */
 /** Lines starting with these tokens continue a previous statement or close a construct. */
 const CONTINUATION_START_PATTERN = /^(?:\.|&\.|&&|\|\||\)|\]|\}|\||(?:else|elsif|when|in|rescue|ensure|end|then|do|and|or)\b)/;
 /** A previous line ending with these tokens means the current line continues its statement. */

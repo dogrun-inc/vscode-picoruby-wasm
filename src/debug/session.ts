@@ -123,7 +123,16 @@ interface PicoRubyWasmIncomingMessage {
 	text?: unknown;
 	reason?: unknown;
 	line?: unknown;
+	/** VFS-relative path resolved by the WebView source map (fallback when no marker was seen). */
+	sourcePath?: unknown;
+	/** Original 1-based line resolved by the WebView source map. */
+	sourceLine?: unknown;
 }
+
+/**
+ * Stop reasons reported to VS Code via the DAP stopped event.
+ */
+type PicoRubyWasmStopReason = 'entry' | 'breakpoint' | 'step';
 
 /**
  * Returns the extension root URI.
@@ -157,6 +166,133 @@ function getNonce(): string {
  */
 function formatWebviewLogOutput(text: string): string {
 	return `[webview] ${text.endsWith('\n') ? text : `${text}\n`}`;
+}
+
+/**
+ * Matches the marker emitted by WebView-injected breakpoints right before binding.irb pauses.
+ */
+const DEBUG_HIT_MARKER_PATTERN = /^\[vscode-debug-hit\] path=(.+),line=(\d+)$/;
+
+/*
+ * Line-eligibility rules below mirror instrumentDebugLines in assets/webviewRuntime.js.
+ * Keep both in sync so a verified breakpoint always has a trace hook.
+ */
+/** Lines starting with these tokens continue a previous statement or close a construct. */
+const CONTINUATION_START_PATTERN = /^(?:\.|&\.|&&|\|\||\)|\]|\}|\||(?:else|elsif|when|in|rescue|ensure|end|then|do|and|or)\b)/;
+/** A previous line ending with these tokens means the current line continues its statement. */
+const CONTINUATION_END_PATTERN = /(?:[,\\(\[{.=]|&&|\|\||[-+*\/%<>]|\b(?:and|or|not))$/;
+/** Heredoc opener; group 2 is the terminator identifier. */
+const HEREDOC_START_PATTERN = /<<[~-]?(['"`]?)([A-Za-z_]\w*)\1/;
+/** Opening tag of an inline PicoRuby script block in HTML. */
+const RUBY_SCRIPT_OPEN_PATTERN = /<script\b[^>]*\btype=["'](?:text\/ruby|text\/picoruby)["'][^>]*>/i;
+/** Closing script tag. */
+const SCRIPT_CLOSE_PATTERN = /<\/script\s*>/i;
+
+/**
+ * Computes the 1-based lines of a Ruby document that the WebView would instrument with a trace hook.
+ * Comments, blank lines, closing keywords, continuation lines, heredoc bodies, =begin blocks and
+ * everything after __END__ are excluded.
+ *
+ * @param lines Ruby source lines.
+ * @param offset Added to each index to produce the reported line number.
+ * @param eligible Set that receives eligible line numbers.
+ */
+function collectInjectableRubyLines(lines: string[], offset: number, eligible: Set<number>): void {
+	let previousCode = '';
+	let heredocTerminator: string | null = null;
+	let inBlockComment = false;
+
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index];
+		const trimmed = line.trim();
+
+		if (heredocTerminator !== null) {
+			if (trimmed === heredocTerminator) {
+				heredocTerminator = null;
+			}
+			continue;
+		}
+		if (inBlockComment) {
+			inBlockComment = !/^=end\b/.test(line);
+			continue;
+		}
+		if (/^=begin\b/.test(line)) {
+			inBlockComment = true;
+			continue;
+		}
+		if (trimmed === '__END__') {
+			return;
+		}
+
+		const injectable =
+			trimmed.length > 0 &&
+			!trimmed.startsWith('#') &&
+			!CONTINUATION_START_PATTERN.test(trimmed) &&
+			!CONTINUATION_END_PATTERN.test(previousCode);
+
+		const heredoc = HEREDOC_START_PATTERN.exec(trimmed);
+		if (heredoc) {
+			heredocTerminator = heredoc[2];
+		}
+		if (trimmed.length > 0 && !trimmed.startsWith('#')) {
+			previousCode = trimmed.replace(/\s#.*$/, '').trimEnd();
+		}
+
+		if (injectable) {
+			eligible.add(index + 1 + offset);
+		}
+	}
+}
+
+/**
+ * Computes breakpoint-eligible lines for a source document.
+ * For HTML, only lines inside inline `<script type="text/ruby">` blocks are considered; each block
+ * is scanned independently, matching how the WebView creates one task per script.
+ *
+ * @param sourceLines Document lines.
+ * @param isHtml Whether the document is an HTML entrypoint.
+ * @returns Set of 1-based eligible line numbers.
+ */
+function computeInjectableBreakpointLines(sourceLines: string[], isHtml: boolean): Set<number> {
+	const eligible = new Set<number>();
+	if (!isHtml) {
+		collectInjectableRubyLines(sourceLines, 0, eligible);
+		return eligible;
+	}
+
+	let blockStart = -1;
+	let block: string[] = [];
+	for (let index = 0; index < sourceLines.length; index += 1) {
+		const line = sourceLines[index];
+		if (blockStart < 0) {
+			const open = RUBY_SCRIPT_OPEN_PATTERN.exec(line);
+			if (!open || /\bsrc\s*=/i.test(open[0])) {
+				continue;
+			}
+			blockStart = index;
+			const rest = line.slice(open.index + open[0].length);
+			const close = SCRIPT_CLOSE_PATTERN.exec(rest);
+			if (close) {
+				collectInjectableRubyLines([rest.slice(0, close.index)], blockStart, eligible);
+				blockStart = -1;
+				continue;
+			}
+			block = [rest];
+			continue;
+		}
+
+		const close = SCRIPT_CLOSE_PATTERN.exec(line);
+		if (close) {
+			block.push(line.slice(0, close.index));
+			collectInjectableRubyLines(block, blockStart, eligible);
+			blockStart = -1;
+			block = [];
+			continue;
+		}
+		block.push(line);
+	}
+
+	return eligible;
 }
 
 /**
@@ -201,7 +337,8 @@ function createPicoRubyWasmWebviewHtmlWithExtensionUri(webview: vscode.Webview, 
  * Public test hook to call WebView HTML generation directly from unit tests.
  */
 export const picoRubyWasmWebviewTestHooks = {
-	createPicoRubyWasmWebviewHtmlWithExtensionUri
+	createPicoRubyWasmWebviewHtmlWithExtensionUri,
+	computeInjectableBreakpointLines
 };
 
 /**
@@ -248,7 +385,7 @@ class PicoRubyWasmMockSessionState {
 	/** Callback used to forward logs received from the WebView. */
 	private readonly onWebviewLog: ((text: string) => void) | undefined;
 	/** Callback used to notify the adapter that runtime entered paused state. */
-	private readonly onRuntimeStopped: ((reason: 'entry' | 'breakpoint', line?: number) => void) | undefined;
+	private readonly onRuntimeStopped: ((reason: PicoRubyWasmStopReason, line?: number) => void) | undefined;
 	/** Callback used to notify the adapter that runtime execution has terminated. */
 	private readonly onRuntimeTerminated: (() => void) | undefined;
 	/** Absolute path to the currently active program. */
@@ -265,6 +402,8 @@ class PicoRubyWasmMockSessionState {
 	private pendingStartCode: string | undefined;
 	/** HTML content waiting to be sent to the WebView runtime for DOM rendering. */
 	private pendingStartHtml: string | undefined;
+	/** Unmodified HTML source used by the WebView to map inline script lines to editor lines. */
+	private pendingStartSourceHtml: string | undefined;
 	/** Ruby files waiting to be mounted into the WebView runtime VFS. */
 	private pendingStartVfs: VfsMap | undefined;
 	/** Pending requests for webview mapped by their request ID. */
@@ -273,6 +412,14 @@ class PicoRubyWasmMockSessionState {
 	private scriptStartLine = 1;
 	/** Pending breakpoints mapped by their normalized file path. */
 	private breakpointsByPath = new Map<string, number[]>();
+	/** Original-case source paths mapped by their normalized breakpoint key. */
+	private breakpointSourcePaths = new Map<string, string>();
+	/** Absolute source path reported by the latest debug-hit marker, consumed by the next stop. */
+	private lastHitPath: string | undefined;
+	/** 1-based line reported by the latest debug-hit marker, consumed by the next stop. */
+	private lastHitLine: number | undefined;
+	/** Absolute source path used for stackTrace responses. Falls back to the active program. */
+	private currentSourcePath: string | undefined;
 
 	/** Retrieves the breakpoints configured for the currently active program. */
 	private get configuredBreakpoints(): number[] {
@@ -285,7 +432,7 @@ class PicoRubyWasmMockSessionState {
 	 */
 	constructor(
 		onWebviewLog?: (text: string) => void,
-		onRuntimeStopped?: (reason: 'entry' | 'breakpoint', line?: number) => void,
+		onRuntimeStopped?: (reason: PicoRubyWasmStopReason, line?: number) => void,
 		onRuntimeTerminated?: () => void
 	) {
 		this.onWebviewLog = onWebviewLog;
@@ -322,6 +469,9 @@ class PicoRubyWasmMockSessionState {
 	async launch(args: PicoRubyWasmLaunchArguments): Promise<{ output: string }> {
 		this.activeProgram = this.resolveProgramPath(args.program, args.cwd);
 		this.currentLine = 1;
+		this.currentSourcePath = undefined;
+		this.lastHitPath = undefined;
+		this.lastHitLine = undefined;
 
 		const [vfs, code] = await Promise.all([
 			collectVfsFiles(this.activeProgram).catch((error: unknown) => {
@@ -355,9 +505,14 @@ class PicoRubyWasmMockSessionState {
 	reset(): Promise<void> {
 		this.pendingStartCode = undefined;
 		this.pendingStartHtml = undefined;
+		this.pendingStartSourceHtml = undefined;
 		this.pendingStartVfs = undefined;
 		this.activeProgramLines = [];
 		this.breakpointsByPath.clear();
+		this.breakpointSourcePaths.clear();
+		this.lastHitPath = undefined;
+		this.lastHitLine = undefined;
+		this.currentSourcePath = undefined;
 		this.scriptStartLine = 1;
 		this.currentLine = 1;
 		this.pendingRequests.clear();
@@ -373,17 +528,11 @@ class PicoRubyWasmMockSessionState {
 	}
 
 	/**
-	 * Requests the WebView runtime to execute one step-over operation.
+	 * Requests the WebView runtime to run until the next instrumented line.
+	 * Step over, step in, and step out all map to this single-line step.
 	 */
-	nextRuntime(): void {
-		this.postControlMessage('next');
-	}
-
-	/**
-	 * Requests the WebView runtime to execute one step-in operation.
-	 */
-	stepInRuntime(): void {
-		this.postControlMessage('stepIn');
+	stepRuntime(): void {
+		this.postControlMessage('step');
 	}
 
 	/**
@@ -391,7 +540,7 @@ class PicoRubyWasmMockSessionState {
 	 *
 	 * @param type Control message type.
 	 */
-	private postControlMessage(type: 'continue' | 'next' | 'stepIn' | 'terminate'): void {
+	private postControlMessage(type: 'continue' | 'step' | 'terminate'): void {
 		if (!this.webviewPanel) {
 			this.onWebviewLog?.(`[adapter] dropped '${type}' command: webview panel not available`);
 			return;
@@ -434,94 +583,119 @@ class PicoRubyWasmMockSessionState {
 	 * @param lines 1-based line numbers.
      */
     updateBreakpoints(sourcePath: string | undefined, lines: number[]): void {
-		const key = path.normalize(sourcePath ?? this.activeProgram).toLowerCase();
+		const normalizedPath = path.normalize(sourcePath ?? this.activeProgram);
+		const key = normalizedPath.toLowerCase();
         const validLines = Array.from(
             new Set(lines.filter((line) => Number.isInteger(line) && line > 0))
         ).sort((left, right) => left - right);
 
         // Save the valid lines for the given source path
         this.breakpointsByPath.set(key, validLines);
+		this.breakpointSourcePaths.set(key, normalizedPath);
 
         this.postBreakpointsIfReady();
     }
 
 	/**
-	 * Resolves source lines used to validate breakpoint positions.
+	 * Converts all configured breakpoints into a WebView-friendly map keyed by VFS-relative path.
+	 * Sources outside the program directory cannot be resolved by the WebView and are omitted.
+	 *
+	 * @returns Map of POSIX-style relative paths (e.g. `lib/helper.rb`, `index.html`) to 1-based lines.
+	 */
+	createAllBreakpointsPayload(): Record<string, number[]> {
+		const rootDirectory = path.dirname(this.activeProgram);
+		const payload: Record<string, number[]> = {};
+
+		for (const [key, lines] of this.breakpointsByPath) {
+			if (lines.length === 0) {
+				continue;
+			}
+
+			const sourcePath = this.breakpointSourcePaths.get(key) ?? key;
+			const relativePath = path.relative(rootDirectory, sourcePath);
+			if (relativePath.length === 0 || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+				continue;
+			}
+
+			payload[relativePath.split(path.sep).join('/')] = [...lines];
+		}
+
+		return payload;
+	}
+
+	/**
+	 * Records the location reported by a `[vscode-debug-hit]` marker so the next stop can use it.
+	 *
+	 * @param text Log text received from the WebView.
+	 * @returns true when the text was a marker and should be hidden from the Debug Console.
+	 */
+	captureDebugHit(text: string): boolean {
+		const match = DEBUG_HIT_MARKER_PATTERN.exec(text.trim());
+		if (!match) {
+			return false;
+		}
+
+		const line = Number.parseInt(match[2], 10);
+		if (!Number.isInteger(line) || line <= 0) {
+			return false;
+		}
+
+		this.lastHitPath = this.resolveRuntimeSourcePath(match[1]);
+		this.lastHitLine = line;
+		return true;
+	}
+
+	/**
+	 * Resolves a VFS-relative path reported by the WebView to the editor's absolute path.
+	 *
+	 * @param relativePath Path relative to the program directory.
+	 * @returns Absolute path, preferring the original-case path seen in setBreakpoints.
+	 */
+	private resolveRuntimeSourcePath(relativePath: string): string {
+		const resolvedPath = path.resolve(path.dirname(this.activeProgram), relativePath.trim());
+		const key = path.normalize(resolvedPath).toLowerCase();
+		return this.breakpointSourcePaths.get(key) ?? resolvedPath;
+	}
+
+	/**
+	 * Resolves the set of breakpoint-eligible lines for a source file using the same rules as the
+	 * WebView trace instrumentation.
 	 *
 	 * @param sourcePath Source path from DAP setBreakpoints request.
-	 * @returns Source lines, or undefined when source cannot be resolved.
+	 * @returns Eligible 1-based lines, or undefined when source cannot be resolved.
 	 */
-	resolveBreakpointValidationLines(sourcePath: string | undefined): string[] | undefined {
+	resolveInjectableBreakpointLines(sourcePath: string | undefined): Set<number> | undefined {
 		if (typeof sourcePath === 'string' && sourcePath.length > 0) {
 			try {
-				return readFileSync(sourcePath, 'utf8').split('\n');
+				return computeInjectableBreakpointLines(
+					readFileSync(sourcePath, 'utf8').split('\n'),
+					/\.html?$/i.test(sourcePath)
+				);
 			} catch {
 				// Fall back to active program lines below.
 			}
 		}
 
 		if (this.activeProgramLines.length > 0) {
-			return this.activeProgramLines;
+			// activeProgramLines already hold the extracted Ruby, so they are never scanned as HTML.
+			return computeInjectableBreakpointLines(this.activeProgramLines, false);
 		}
 
 		return undefined;
 	}
 
 	/**
-	 * Returns whether a source line can safely receive "binding.irb; " injection.
+	 * Returns whether a breakpoint line will receive a trace hook in the WebView.
 	 *
 	 * @param line 1-based source line number.
-	 * @returns false for comments, empty lines, and control-flow keywords that would break Ruby syntax when prepended.
+	 * @param eligibleLines Result of resolveInjectableBreakpointLines; undefined accepts any positive line.
 	 */
-	isInjectableBreakpointLine(line: number, sourceLines: string[] | undefined): boolean {
+	isInjectableBreakpointLine(line: number, eligibleLines: Set<number> | undefined): boolean {
 		if (!Number.isInteger(line) || line <= 0) {
 			return false;
 		}
 
-		if (sourceLines === undefined) {
-			return true;
-		}
-
-		const sourceLine = sourceLines[line - 1];
-		if (typeof sourceLine !== 'string') {
-			return false;
-		}
-
-		const trimmed = sourceLine.trimStart();
-		if (trimmed.length === 0 || trimmed.startsWith('#')) {
-			return false;
-		}
-
-		return !/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed);
-	}
-
-	/**
-	 * Injects binding.irb into the configured Ruby source lines.
-	 *
-	 * @param sourceCode Ruby source code.
-	 * @param breakpoints 1-based line numbers from VS Code (HTML line numbers).
-	 * @returns Ruby source code with debugger bindings injected.
-	 */
-	injectBindingIrb(sourceCode: string, breakpoints: number[]): string {
-		const lines = sourceCode.split('\n');
-		const offset = this.scriptStartLine - 1;
-
-		const rubyBreakpoints = new Set(
-			breakpoints
-				.map((htmlLine) => htmlLine - offset)
-				.filter((line) => Number.isInteger(line) && line > 0)
-		);
-
-		for (let index = 0; index < lines.length; index += 1) {
-			const lineNumber = index + 1; // 1-based Ruby line number corresponding to the current index
-			if (!rubyBreakpoints.has(lineNumber) || !this.isInjectableBreakpointLine(lineNumber, lines)) {
-				continue;
-			}
-
-			lines[index] = `binding.irb; ${lines[index]}`;
-		}
-
-		return lines.join('\n');
+		return eligibleLines === undefined || eligibleLines.has(line);
 	}
 
 	/**
@@ -567,21 +741,7 @@ class PicoRubyWasmMockSessionState {
 			}
 
 			if (receivedMessage.type === 'stopped') {
-				const reason =
-					receivedMessage.reason === 'breakpoint' || receivedMessage.reason === 'entry'
-						? receivedMessage.reason
-						: 'breakpoint';
-				let line =
-					typeof receivedMessage.line === 'number' && Number.isInteger(receivedMessage.line) && receivedMessage.line > 0
-						? receivedMessage.line
-						: undefined;
-						
-				// Adjust the line number to html file line number.
-				if (line !== undefined) {
-					line = line + (this.scriptStartLine - 1);
-					this.currentLine = line;
-				}
-				this.onRuntimeStopped?.(reason, line);
+				this.handleWebviewStopped(receivedMessage);
 				return;
 			}
 
@@ -594,12 +754,54 @@ class PicoRubyWasmMockSessionState {
 				return;
 			}
 
-			this.onWebviewLog?.(this.stringifyWebviewMessage(receivedMessage.text));
+			const logText = this.stringifyWebviewMessage(receivedMessage.text);
+			if (this.captureDebugHit(logText)) {
+				return;
+			}
+
+			this.onWebviewLog?.(logText);
 		});
 		this.webviewPanel.onDidDispose(() => {
 			this.webviewPanel = undefined;
 			this.webviewReady = false;
 		});
+	}
+
+	/**
+	 * Handles a runtime stop reported by the WebView and resolves the position to report to VS Code.
+	 * A preceding `[vscode-debug-hit]` marker takes priority over the runtime line, which refers to the
+	 * require-expanded script rather than the original file.
+	 *
+	 * @param message Incoming stopped message from the WebView.
+	 */
+	handleWebviewStopped(message: PicoRubyWasmIncomingMessage): void {
+		const reason: PicoRubyWasmStopReason =
+			message.reason === 'breakpoint' || message.reason === 'entry' || message.reason === 'step'
+				? message.reason
+				: 'breakpoint';
+		const isValidLine = (value: unknown): value is number =>
+			typeof value === 'number' && Number.isInteger(value) && value > 0;
+		let line = isValidLine(message.line) ? message.line : undefined;
+
+		if (this.lastHitPath !== undefined && this.lastHitLine !== undefined) {
+			line = this.lastHitLine;
+			this.currentLine = line;
+			this.currentSourcePath = this.lastHitPath;
+			this.lastHitPath = undefined;
+			this.lastHitLine = undefined;
+		} else if (typeof message.sourcePath === 'string' && isValidLine(message.sourceLine)) {
+			// WebView translated the combined-script line through its source map.
+			line = message.sourceLine;
+			this.currentLine = line;
+			this.currentSourcePath = this.resolveRuntimeSourcePath(message.sourcePath);
+		} else if (line !== undefined) {
+			// Adjust the line number to html file line number.
+			line = line + (this.scriptStartLine - 1);
+			this.currentLine = line;
+			this.currentSourcePath = this.activeProgram;
+		}
+
+		this.onRuntimeStopped?.(reason, line);
 	}
 
 	/**
@@ -644,19 +846,24 @@ class PicoRubyWasmMockSessionState {
 			return;
 		}
 
-		const code = this.injectBindingIrb(this.pendingStartCode, this.configuredBreakpoints);
+		const code = this.pendingStartCode;
 		const html = this.pendingStartHtml;
+		const sourceHtml = this.pendingStartSourceHtml;
 		const vfs = this.pendingStartVfs ?? {};
 		this.pendingStartCode = undefined;
 		this.pendingStartHtml = undefined;
+		this.pendingStartSourceHtml = undefined;
 		this.pendingStartVfs = undefined;
 
 		void this.webviewPanel.webview.postMessage({
 			type: 'start',
 			code,
 			html,
+			sourceHtml,
 			vfs,
-			breakpoints: this.configuredBreakpoints
+			programPath: path.basename(this.activeProgram),
+			breakpoints: this.configuredBreakpoints,
+			allBreakpoints: this.createAllBreakpointsPayload()
 		});
 	}
 
@@ -686,6 +893,7 @@ class PicoRubyWasmMockSessionState {
 			const content = await readFile(programPath, 'utf8');
 			
 			if (programPath.toLowerCase().endsWith('.html') || programPath.toLowerCase().endsWith('.htm')) {
+				this.pendingStartSourceHtml = content;
 				this.pendingStartHtml = await this.inlineExternalCss(content, programPath);
 				
 				const lines = content.split('\n');
@@ -719,6 +927,7 @@ class PicoRubyWasmMockSessionState {
 
 			this.scriptStartLine = 1; // if it's .rb files and so on, it is always 1.
 			this.pendingStartHtml = undefined;
+			this.pendingStartSourceHtml = undefined;
 			return content;
 		} catch (error: unknown) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -761,6 +970,7 @@ class PicoRubyWasmMockSessionState {
 	 * @returns A single frame pointing to the active program.
 	 */
 	createStackFrames(): PicoRubyWasmStackFrame[] {
+		const sourcePath = this.currentSourcePath ?? this.activeProgram;
 		return [
 			{
 				id: 1,
@@ -768,8 +978,8 @@ class PicoRubyWasmMockSessionState {
 				line: this.currentLine,
 				column: 1,
 				source: {
-					name: path.basename(this.activeProgram),
-					path: this.activeProgram
+					name: path.basename(sourcePath),
+					path: sourcePath
 				}
 			}
 		];
@@ -1020,7 +1230,7 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 * @param response DAP response object.
 	 */
 	protected nextRequest(response: any): void {
-		this.state.nextRuntime();
+		this.state.stepRuntime();
 		this.sendResponse(response);
 	}
 
@@ -1030,7 +1240,17 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	 * @param response DAP response object.
 	 */
 	protected stepInRequest(response: any): void {
-		this.state.stepInRuntime();
+		this.state.stepRuntime();
+		this.sendResponse(response);
+	}
+
+	/**
+	 * Handles DAP stepOut requests.
+	 *
+	 * @param response DAP response object.
+	 */
+	protected stepOutRequest(response: any): void {
+		this.state.stepRuntime();
 		this.sendResponse(response);
 	}
 
@@ -1047,7 +1267,7 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
         const requested = Array.isArray(args?.breakpoints) ? args.breakpoints : [];
         const sourcePath = typeof args?.source?.path === 'string' ? args.source.path : undefined;
 
-		const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
+		const validationLines = this.state.resolveInjectableBreakpointLines(sourcePath);
 		const acceptedLines = requested
 			.map((bp) => bp?.line)
 			.filter(
@@ -1308,23 +1528,15 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				});
 				return;
 			case 'next':
-				this.state.nextRuntime();
-				this.emit({
-					type: 'response',
-					seq: this.nextMessageSeq(),
-					request_seq: message.seq,
-					success: true,
-					command: 'next'
-				});
-				return;
 			case 'stepIn':
-				this.state.stepInRuntime();
+			case 'stepOut':
+				this.state.stepRuntime();
 				this.emit({
 					type: 'response',
 					seq: this.nextMessageSeq(),
 					request_seq: message.seq,
 					success: true,
-					command: 'stepIn'
+					command: message.command
 				});
 				return;
 			case 'setBreakpoints': {
@@ -1336,7 +1548,7 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
                         ? message.arguments.source.path
                         : undefined;
 
-				const validationLines = this.state.resolveBreakpointValidationLines(sourcePath);
+				const validationLines = this.state.resolveInjectableBreakpointLines(sourcePath);
 				const acceptedLines = requested
 					.map((bp: { line?: number; column?: number }) => bp?.line)
 					.filter(

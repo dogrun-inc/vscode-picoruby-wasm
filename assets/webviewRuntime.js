@@ -280,6 +280,217 @@ const resolveVfsScriptPath = (request, vfs) => {
 };
 
 /**
+ * Prefix of the stdout line emitted right before an injected binding.irb pauses execution.
+ * The extension host intercepts this line to map the stop back to the original file/line.
+ */
+const DEBUG_HIT_MARKER = '[vscode-debug-hit]';
+
+/**
+ * Returns whether a source line can safely receive a breakpoint prefix.
+ * Mirrors isInjectableBreakpointLine in src/debug/session.ts.
+ * @param {unknown} sourceLine Raw source line.
+ * @returns {boolean} false for comments, blank lines, and continuation keywords.
+ */
+const isInjectableBreakpointLine = (sourceLine) => {
+	if (typeof sourceLine !== 'string') {
+		return false;
+	}
+
+	const trimmed = sourceLine.trimStart();
+	if (trimmed.length === 0 || trimmed.startsWith('#')) {
+		return false;
+	}
+
+	return !/^(?:else|elsif|when|rescue|ensure|end)\b/.test(trimmed);
+};
+
+/**
+ * Looks up breakpoint lines for a source path, ignoring separator and case differences.
+ * @param {unknown} allBreakpoints Map of VFS-relative paths to 1-based line numbers.
+ * @param {unknown} sourcePath VFS-relative source path.
+ * @returns {number[]} Valid breakpoint lines, or an empty array.
+ */
+const findBreakpointLines = (allBreakpoints, sourcePath) => {
+	if (!allBreakpoints || typeof allBreakpoints !== 'object' || typeof sourcePath !== 'string') {
+		return [];
+	}
+
+	const wanted = sourcePath.toLowerCase();
+	for (const [rawPath, lines] of Object.entries(allBreakpoints)) {
+		const normalized = normalizeVfsPath(rawPath);
+		if (normalized && normalized.toLowerCase() === wanted && Array.isArray(lines)) {
+			return lines.filter((line) => Number.isInteger(line) && line > 0);
+		}
+	}
+
+	return [];
+};
+
+/**
+ * Builds the Ruby trace hook prefixed to an executable line.
+ * `trace` records the original position; it returns true (and prints the debug-hit marker)
+ * only when a breakpoint is set on the line or a step was requested, which then pauses via
+ * `binding.irb` in the user's own scope so locals stay inspectable.
+ * @param {string} sourcePath Original source path.
+ * @param {number} line Original 1-based line.
+ * @param {boolean} breakpoint Whether a breakpoint is set on the line.
+ * @returns {string} Semicolon-terminated Ruby statement.
+ */
+const createTraceStatement = (sourcePath, line, breakpoint) => {
+	const escapedPath = sourcePath.replace(/[\\"#]/g, '\\$&');
+	return `binding.irb if $PicoRubyDebug.trace("${escapedPath}", ${line}${breakpoint ? ', true' : ''});`;
+};
+
+/**
+ * Ruby prelude that defines `$PicoRubyDebug`, prepended as a single line to every debug task.
+ * `||=` keeps stepping state shared when several tasks run in the same VM.
+ */
+const DEBUG_PRELUDE = [
+	'class PicoRubyDebugClass',
+	'attr_accessor :stepping, :current_path, :current_line',
+	'def initialize',
+	'@stepping = false',
+	'@current_path = ""',
+	'@current_line = 0',
+	'end',
+	'def trace(path, line, breakpoint = false)',
+	'@current_path = path',
+	'@current_line = line',
+	'return false unless breakpoint || @stepping',
+	'@stepping = false',
+	`puts "${DEBUG_HIT_MARKER} path=#{path},line=#{line}"`,
+	'true',
+	'end',
+	'end',
+	'$PicoRubyDebug ||= PicoRubyDebugClass.new'
+].join('; ');
+
+/*
+ * Line-eligibility rules below are mirrored by computeInjectableBreakpointLines in src/debug/session.ts
+ * for breakpoint verification. Keep both in sync.
+ */
+/** Lines starting with these tokens continue a previous statement or close a construct. */
+const CONTINUATION_START_PATTERN = /^(?:\.|&\.|&&|\|\||\)|\]|\}|\||(?:else|elsif|when|in|rescue|ensure|end|then|do|and|or)\b)/;
+/** A previous line ending with these tokens means the current line continues its statement. */
+const CONTINUATION_END_PATTERN = /(?:[,\\(\[{.=]|&&|\|\||[-+*\/%<>]|\b(?:and|or|not))$/;
+/** Heredoc opener; group 2 is the terminator identifier (any case, e.g. `<<~eof`). */
+const HEREDOC_START_PATTERN = /<<[~-]?(['"`]?)([A-Za-z_]\w*)\1/;
+
+/**
+ * Prefixes each executable combined line with a `$PicoRubyDebug.trace` hook.
+ * Lines whose prefixing would break Ruby syntax (comments, continuations, closing keywords,
+ * heredoc bodies, =begin blocks, after __END__) are left untouched. Line count is preserved.
+ * @param {string[]} lines Combined Ruby source lines after require expansion.
+ * @param {Array<{ path: string|null, line: number }>} entries Original position per combined line.
+ * @param {object} allBreakpoints Map of VFS-relative paths to 1-based breakpoint lines.
+ * @returns {string[]} Instrumented lines.
+ */
+const instrumentDebugLines = (lines, entries, allBreakpoints) => {
+	const breakpointCache = new Map();
+	const hasBreakpoint = (sourcePath, line) => {
+		if (!breakpointCache.has(sourcePath)) {
+			breakpointCache.set(sourcePath, new Set(findBreakpointLines(allBreakpoints, sourcePath)));
+		}
+		return breakpointCache.get(sourcePath).has(line);
+	};
+
+	let previousCode = '';
+	let heredocTerminator = null;
+	let inBlockComment = false;
+	let ended = false;
+
+	return lines.map((line, index) => {
+		const entry = entries[index];
+		const trimmed = line.trim();
+
+		if (ended) {
+			return line;
+		}
+		if (heredocTerminator !== null) {
+			if (trimmed === heredocTerminator) {
+				heredocTerminator = null;
+			}
+			return line;
+		}
+		if (inBlockComment) {
+			inBlockComment = !/^=end\b/.test(line);
+			return line;
+		}
+		if (/^=begin\b/.test(line)) {
+			inBlockComment = true;
+			return line;
+		}
+		if (trimmed === '__END__') {
+			ended = true;
+			return line;
+		}
+
+		const injectable =
+			entry && typeof entry.path === 'string' &&
+			isInjectableBreakpointLine(line) &&
+			!CONTINUATION_START_PATTERN.test(trimmed) &&
+			!CONTINUATION_END_PATTERN.test(previousCode);
+
+		const heredoc = HEREDOC_START_PATTERN.exec(trimmed);
+		if (heredoc) {
+			heredocTerminator = heredoc[2];
+		}
+		if (trimmed.length > 0 && !trimmed.startsWith('#')) {
+			previousCode = trimmed.replace(/\s#.*$/, '').trimEnd();
+		}
+
+		if (!injectable) {
+			return line;
+		}
+
+		return `${createTraceStatement(entry.path, entry.line, hasBreakpoint(entry.path, entry.line))} ${line}`;
+	});
+};
+
+/** Matches a local require statement that may be expanded from the VFS. */
+const REQUIRE_LINE_PATTERN = /^\s*require\s+['"]([^'"]+)['"]\s*(?:#.*)?$/;
+
+/**
+ * Recursively expands local require statements while recording the original position of every line.
+ * @param {string} code Ruby source to expand.
+ * @param {object} vfs Map of VFS paths to source text.
+ * @param {string} importerPath VFS path used to resolve relative requires.
+ * @param {string|null} sourcePath Path recorded in the source map for lines of `code`.
+ * @param {number} lineOffset Original document line of code line 1, minus 1.
+ * @param {Set<string>} loadedPaths Paths already expanded in this task.
+ * @returns {{ lines: string[], entries: Array<{ path: string|null, line: number }> }} Combined lines and their origins.
+ */
+const expandVfsRequireLines = (code, vfs, importerPath, sourcePath, lineOffset, loadedPaths) => {
+	const lines = [];
+	const entries = [];
+
+	code.split('\n').forEach((line, index) => {
+		const entry = { path: sourcePath, line: index + 1 + lineOffset };
+		const match = line.match(REQUIRE_LINE_PATTERN);
+		const resolvedPath = match ? resolveVfsRequirePath(match[1], importerPath, vfs) : null;
+		if (!resolvedPath) {
+			lines.push(line);
+			entries.push(entry);
+			return;
+		}
+
+		if (loadedPaths.has(resolvedPath)) {
+			lines.push('');
+			entries.push(entry);
+			return;
+		}
+
+		loadedPaths.add(resolvedPath);
+		console.log(`[vfs] expanded require '${match[1]}' from ${resolvedPath}`);
+		const nested = expandVfsRequireLines(vfs[resolvedPath], vfs, resolvedPath, resolvedPath, 0, loadedPaths);
+		lines.push(...nested.lines);
+		entries.push(...nested.entries);
+	});
+
+	return { lines, entries };
+};
+
+/**
  * Recursively expands local require statements before Ruby task creation.
  * @param {string} code Ruby source to expand.
  * @param {object} vfs Map of VFS paths to source text.
@@ -292,56 +503,91 @@ const expandVfsRequires = (code, vfs, importerPath = '__entrypoint__.rb', loaded
 		return code;
 	}
 
-	return code.split('\n').map((line) => {
-		const match = line.match(/^\s*require\s+['"]([^'"]+)['"]\s*(?:#.*)?$/);
-		if (!match) {
-			return line;
-		}
-
-		const resolvedPath = resolveVfsRequirePath(match[1], importerPath, vfs);
-		if (!resolvedPath) {
-			return line;
-		}
-
-		if (loadedPaths.has(resolvedPath)) {
-			return '';
-		}
-
-		loadedPaths.add(resolvedPath);
-		console.log(`[vfs] expanded require '${match[1]}' from ${resolvedPath}`);
-		return expandVfsRequires(vfs[resolvedPath], vfs, resolvedPath, loadedPaths);
-	}).join('\n');
+	return expandVfsRequireLines(code, vfs, importerPath, importerPath, 0, loadedPaths).lines.join('\n');
 };
 
 /**
- * Collects all Ruby script tags from the debug HTML and resolves local src files from VFS.
- * @param {unknown} html Debug HTML sent by the extension host.
- * @param {string} fallbackCode First inline script after breakpoint injection.
+ * Builds the final debug task source: prelude + require-expanded, trace-instrumented code.
+ * @param {{ code: string, filename: string|null, sourcePath: string|null, lineOffset: number }} task Ruby task.
  * @param {object} vfs Map of VFS paths to source text.
- * @returns {Array<{ code: string, filename: string | null }>} Ruby task sources in document order.
+ * @param {object} allBreakpoints Map of VFS-relative paths to 1-based breakpoint lines.
+ * @returns {{ code: string, sourceMap: { [combinedLine: number]: { path: string|null, line: number } } }}
  */
-const collectDebugRubyScripts = (html, fallbackCode, vfs) => {
+const buildDebugTaskCode = (task, vfs, allBreakpoints) => {
+	const { lines, entries } = expandVfsRequireLines(
+		task.code,
+		vfs,
+		task.filename || '__entrypoint__.rb',
+		task.sourcePath ?? null,
+		task.lineOffset || 0,
+		new Set()
+	);
+	const instrumented = instrumentDebugLines(lines, entries, allBreakpoints);
+
+	// Combined line 1 is the prelude, so original lines start at combined line 2.
+	const sourceMap = {};
+	entries.forEach((entry, index) => {
+		sourceMap[index + 2] = entry;
+	});
+
+	return { code: `${DEBUG_PRELUDE}\n${instrumented.join('\n')}`, sourceMap };
+};
+
+/** Matches `<script ...>...</script>` pairs; group 1 is the attribute text, group 2 the content. */
+const SCRIPT_TAG_PATTERN = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+/** Matches a Ruby script type attribute; anchored so `data-type` does not match. */
+const RUBY_SCRIPT_TYPE_PATTERN = /(?:^|\s)type\s*=\s*["']?(?:text\/ruby|text\/picoruby)\b/i;
+/** Matches a src attribute (quoted or bare); anchored so `data-src` does not match. */
+const SCRIPT_SRC_PATTERN = /(?:^|\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
+
+/**
+ * Collects all Ruby script tags from the debug HTML and resolves local src files from VFS.
+ * Each task records its original source path and the line offset of its first line, so the
+ * raw HTML (not a CSS-inlined copy) must be passed for accurate line mapping.
+ * @param {unknown} html Debug HTML sent by the extension host.
+ * @param {string} fallbackCode Program source used when no HTML is available (.rb programs).
+ * @param {object} vfs Map of VFS paths to source text.
+ * @param {{ programPath?: string|null }} debugOptions Source path used for inline/fallback code.
+ * @returns {Array<{ code: string, filename: string | null, sourcePath: string | null, lineOffset: number }>} Ruby task sources in document order.
+ */
+const collectDebugRubyScripts = (html, fallbackCode, vfs, debugOptions = {}) => {
+	const programPath = typeof debugOptions.programPath === 'string' ? debugOptions.programPath : null;
+
 	if (typeof html !== 'string') {
-		return fallbackCode.length > 0 ? [{ code: fallbackCode, filename: null }] : [];
+		return fallbackCode.length > 0
+			? [{ code: fallbackCode, filename: null, sourcePath: programPath, lineOffset: 0 }]
+			: [];
 	}
 
-	const document = new DOMParser().parseFromString(html, 'text/html');
-	let usedFallbackCode = false;
-	return Array.from(document.querySelectorAll('script[type="text/ruby"], script[type="text/picoruby"]'))
-		.map((script) => {
-			const sourceAttribute = script.getAttribute('src');
-			if (sourceAttribute) {
-				const vfsPath = resolveVfsScriptPath(sourceAttribute, vfs);
-				return vfsPath ? { code: vfs[vfsPath], filename: vfsPath } : null;
-			}
+	const tasks = [];
+	const pattern = new RegExp(SCRIPT_TAG_PATTERN.source, 'gi');
+	let match;
+	while ((match = pattern.exec(html)) !== null) {
+		const [, attributes, content] = match;
+		if (!RUBY_SCRIPT_TYPE_PATTERN.test(attributes)) {
+			continue;
+		}
 
-			const code = !usedFallbackCode && fallbackCode.length > 0
-				? fallbackCode
-				: script.textContent || '';
-			usedFallbackCode = usedFallbackCode || fallbackCode.length > 0;
-			return code.trim().length > 0 ? { code, filename: null } : null;
-		})
-		.filter((task) => task !== null);
+		const srcMatch = SCRIPT_SRC_PATTERN.exec(attributes);
+		if (srcMatch) {
+			const vfsPath = resolveVfsScriptPath(srcMatch[1] ?? srcMatch[2] ?? srcMatch[3], vfs);
+			if (vfsPath) {
+				tasks.push({ code: vfs[vfsPath], filename: vfsPath, sourcePath: vfsPath, lineOffset: 0 });
+			}
+			continue;
+		}
+
+		if (content.trim().length === 0) {
+			continue;
+		}
+
+		// Content starts right after `<script` + attributes + `>`.
+		const contentStartIndex = match.index + '<script'.length + attributes.length + 1;
+		const lineOffset = (html.slice(0, contentStartIndex).match(/\n/g) || []).length;
+		tasks.push({ code: content, filename: null, sourcePath: programPath, lineOffset });
+	}
+
+	return tasks;
 };
 
 /**
@@ -377,7 +623,9 @@ const moduleReady = loadPicorubyModule()
 			pauseId: null,
 			terminatedNotified: false,
 			sessionStarted: false,
-			lastProgressTime: performance.now()
+			lastProgressTime: performance.now(),
+			stopReason: 'breakpoint',
+			sourceMaps: []
 		};
 		instance.picorubyDebugState = runtimeState;
 
@@ -390,7 +638,19 @@ const moduleReady = loadPicorubyModule()
 			runtimeState.lastProgressTime = performance.now();
 
 			const line = Number.isInteger(status?.line) && status.line > 0 ? status.line : undefined;
-			vscode.postMessage({ type: 'stopped', reason: 'breakpoint', line });
+			// The runtime line is only unambiguous when a single task owns the combined script.
+			const mapped = line !== undefined && runtimeState.sourceMaps.length === 1
+				? runtimeState.sourceMaps[0][line]
+				: undefined;
+			const reason = runtimeState.stopReason;
+			runtimeState.stopReason = 'breakpoint';
+			vscode.postMessage({
+				type: 'stopped',
+				reason,
+				line,
+				sourcePath: typeof mapped?.path === 'string' ? mapped.path : undefined,
+				sourceLine: mapped && typeof mapped.path === 'string' ? mapped.line : undefined
+			});
 		};
 
 		const notifyTerminatedOnce = () => {
@@ -606,6 +866,21 @@ window.addEventListener('message', async (event) => {
 		}
 	};
 
+	const armSteppingFlag = (instance) => {
+		if (typeof instance.ccall !== 'function' || typeof instance._mrb_debug_eval_in_binding === 'undefined') {
+			console.log('[debugger] mrb_debug_eval_in_binding is unavailable; step behaves like continue');
+			return false;
+		}
+
+		try {
+			instance.ccall('mrb_debug_eval_in_binding', 'string', ['string'], ['$PicoRubyDebug.stepping = true']);
+			return true;
+		} catch (error) {
+			console.log('[debugger] failed to arm stepping flag', error);
+			return false;
+		}
+	};
+
 	if (data?.type === 'setBreakpoints') {
 		const instance = await moduleReady;
 		instance.picorubyDebugState.breakpoints = Array.isArray(data.breakpoints)
@@ -616,19 +891,16 @@ window.addEventListener('message', async (event) => {
 
 	if (data?.type === 'continue') {
 		const instance = await moduleReady;
+		instance.picorubyDebugState.stopReason = 'breakpoint';
 		executeDebugCommand(instance, 'mrb_debug_continue', '_mrb_debug_continue');
 		return;
 	}
 
-	if (data?.type === 'next') {
+	if (data?.type === 'step') {
 		const instance = await moduleReady;
-		executeDebugCommand(instance, 'mrb_debug_next', '_mrb_debug_next');
-		return;
-	}
-
-	if (data?.type === 'stepIn') {
-		const instance = await moduleReady;
-		executeDebugCommand(instance, 'mrb_debug_step', '_mrb_debug_step');
+		// Arm $PicoRubyDebug so the next trace hook pauses, then leave the current irb session.
+		instance.picorubyDebugState.stopReason = armSteppingFlag(instance) ? 'step' : 'breakpoint';
+		executeDebugCommand(instance, 'mrb_debug_continue', '_mrb_debug_continue');
 		return;
 	}
 
@@ -728,6 +1000,7 @@ window.addEventListener('message', async (event) => {
 				result = toEvaluationResultString(globalsData[`$${expression}`]);
 			} else if (!foundInLocals && typeof instance.ccall === 'function') {
 				const nativeEvaluateCandidates = [
+					{ command: 'mrb_debug_eval_in_binding', exportName: '_mrb_debug_eval_in_binding' },
 					{ command: 'mrb_debug_eval', exportName: '_mrb_debug_eval' },
 					{ command: 'mrb_debug_evaluate', exportName: '_mrb_debug_evaluate' }
 				];
@@ -798,9 +1071,16 @@ window.addEventListener('message', async (event) => {
     }
 
 	const instance = await moduleReady;
+	const allBreakpoints = data.allBreakpoints && typeof data.allBreakpoints === 'object' ? data.allBreakpoints : {};
+	const programPath = typeof data.programPath === 'string' ? data.programPath : null;
 	ensurePicorubyInitialized(instance, data.vfs);
 	const receivedCode = typeof data.code === 'string' ? data.code : String(data.code ?? '');
-	const rubyTasks = collectDebugRubyScripts(data.html, receivedCode, data.vfs);
+	const rubyTasks = collectDebugRubyScripts(
+		typeof data.sourceHtml === 'string' ? data.sourceHtml : data.html,
+		receivedCode,
+		data.vfs,
+		{ programPath }
+	);
 	const runtimeBreakpoints = Array.isArray(data.breakpoints)
 		? data.breakpoints.filter((line) => Number.isInteger(line) && line > 0)
 		: instance.picorubyDebugState.breakpoints;
@@ -810,13 +1090,16 @@ window.addEventListener('message', async (event) => {
 	instance.picorubyDebugState.sessionStarted = false;
 	instance.picorubyDebugState.lastProgressTime = performance.now();
 	instance.picorubyDebugState.breakpoints = runtimeBreakpoints;
+	instance.picorubyDebugState.stopReason = 'breakpoint';
+	instance.picorubyDebugState.sourceMaps = [];
 
 	console.log('Received start command from VS Code.');
 	console.log(`[debugger] creating ${rubyTasks.length} Ruby task(s)`);
 	try {
 		for (const task of rubyTasks) {
 			console.log(`[debugger] creating Ruby task${task.filename ? ` from ${task.filename}` : ''}`);
-			const code = expandVfsRequires(task.code, data.vfs, task.filename || '__entrypoint__.rb');
+			const { code, sourceMap } = buildDebugTaskCode(task, data.vfs, allBreakpoints);
+			instance.picorubyDebugState.sourceMaps.push(sourceMap);
 			if (task.filename) {
 				if (typeof instance._picorb_create_task_with_filename === 'undefined') {
 					throw new Error('picorb_create_task_with_filename is not exported by PicoRuby WASM');
@@ -850,6 +1133,11 @@ if (typeof module !== 'undefined' && module.exports) {
 		resolveVfsRequirePath,
 		resolveVfsScriptPath,
 		collectDebugRubyScripts,
-		expandVfsRequires
+		expandVfsRequires,
+		expandVfsRequireLines,
+		instrumentDebugLines,
+		buildDebugTaskCode,
+		findBreakpointLines,
+		DEBUG_PRELUDE
 	};
 }

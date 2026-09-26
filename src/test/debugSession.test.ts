@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { createPicoRubyWasmInlineDebugAdapter } from '../debug/session';
+import { createPicoRubyWasmInlineDebugAdapter, picoRubyWasmWebviewTestHooks } from '../debug/session';
 
 type DebugMessage = {
 	type: 'response' | 'event';
@@ -94,23 +94,72 @@ suite('debug session adapter', () => {
 		assert.strictEqual(messages[1].event, 'initialized');
 	});
 
-	test('injects binding.irb only on injectable breakpoint lines', () => {
+	test('converts breakpoints into VFS-relative allBreakpoints payload', () => {
 		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
-		const sourceCode = [
-			'puts "Line 1"',
-			'# Comment line',
-			'else',
-			'x = 10'
-		].join('\n');
+		const root = path.resolve(os.tmpdir(), 'picoruby-project');
 
 		try {
-			const result = adapter.state.injectBindingIrb(sourceCode, [1, 2, 3, 4]);
+			adapter.state.activeProgram = path.join(root, 'index.html');
+			adapter.state.updateBreakpoints(path.join(root, 'lib', 'Helper.rb'), [3, 5]);
+			adapter.state.updateBreakpoints(path.join(root, 'index.html'), [12]);
+			adapter.state.updateBreakpoints(path.join(root, 'empty.rb'), []);
+			adapter.state.updateBreakpoints(path.resolve(root, '..', 'outside.rb'), [1]);
 
-			assert.ok(result.includes('binding.irb; puts "Line 1"'));
-			assert.ok(result.includes('# Comment line'));
-			assert.ok(!result.includes('binding.irb; else'));
-			assert.ok(result.includes('binding.irb; x = 10'));
+			assert.deepStrictEqual(adapter.state.createAllBreakpointsPayload(), {
+				'lib/Helper.rb': [3, 5],
+				'index.html': [12]
+			});
 		} finally {
+			adapter.dispose();
+		}
+	});
+
+	test('routes debug-hit markers to the original file and line on the next stop', () => {
+		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
+		const root = path.resolve(os.tmpdir(), 'picoruby-project');
+		const helperPath = path.join(root, 'lib', 'Helper.rb');
+		const messages: DebugMessage[] = [];
+		const subscription = adapter.onDidSendMessage((message: any) => messages.push(message));
+
+		try {
+			adapter.state.activeProgram = path.join(root, 'index.html');
+			adapter.state.updateBreakpoints(helperPath, [4]);
+
+			assert.strictEqual(adapter.state.captureDebugHit('regular output'), false);
+			assert.strictEqual(adapter.state.captureDebugHit('[vscode-debug-hit] path=lib/helper.rb,line=4'), true);
+			assert.strictEqual(adapter.state.lastHitPath, helperPath);
+			assert.strictEqual(adapter.state.lastHitLine, 4);
+
+			// Runtime line 120 refers to the expanded script; the marker position must win.
+			adapter.state.handleWebviewStopped({ type: 'stopped', reason: 'step', line: 120 });
+
+			const stopped = messages.find((message) => message.type === 'event' && message.event === 'stopped');
+			assert.strictEqual(stopped?.body?.line, 4);
+			assert.strictEqual(stopped?.body?.reason, 'step');
+			const [frame] = adapter.state.createStackFrames();
+			assert.strictEqual(frame.line, 4);
+			assert.strictEqual(frame.source.path, helperPath);
+			assert.strictEqual(frame.source.name, 'Helper.rb');
+
+			// Without a marker, a WebView source-map translation is used next.
+			adapter.state.handleWebviewStopped({
+				type: 'stopped',
+				reason: 'breakpoint',
+				line: 30,
+				sourcePath: 'lib/helper.rb',
+				sourceLine: 9
+			});
+			const [mappedFrame] = adapter.state.createStackFrames();
+			assert.strictEqual(mappedFrame.line, 9);
+			assert.strictEqual(mappedFrame.source.path, helperPath);
+
+			// Without either, the stop falls back to the active program position.
+			adapter.state.handleWebviewStopped({ type: 'stopped', reason: 'breakpoint', line: 7 });
+			const [fallbackFrame] = adapter.state.createStackFrames();
+			assert.strictEqual(fallbackFrame.line, 7);
+			assert.strictEqual(fallbackFrame.source.path, adapter.state.activeProgram);
+		} finally {
+			subscription.dispose();
 			adapter.dispose();
 		}
 	});
@@ -224,6 +273,76 @@ suite('debug session adapter', () => {
 		}
 	});
 
+	test('rejects breakpoints on lines the WebView instrumentation skips', () => {
+		const lines = [
+			'def run(a,',
+			'        b)',
+			'  x = [1,',
+			'       2]',
+			'  # comment',
+			'  if x.any?',
+			'    puts "yes"',
+			'  else',
+			'    puts "no"',
+			'  end',
+			'  text = <<~eof',
+			'    heredoc body',
+			'  eof',
+			'  items.each do |item|',
+			'    item.',
+			'      to_s',
+			'  end',
+			'end',
+			'=begin',
+			'block comment',
+			'=end',
+			'puts "after"',
+			'__END__',
+			'data'
+		];
+
+		const eligible = picoRubyWasmWebviewTestHooks.computeInjectableBreakpointLines(lines, false);
+
+		// Matches the expectations of the instrumentDebugLines Jest test.
+		assert.deepStrictEqual([...eligible].sort((left, right) => left - right), [1, 3, 6, 7, 9, 11, 14, 15, 22]);
+	});
+
+	test('verifies HTML breakpoints only inside inline PicoRuby script blocks', () => {
+		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-debug-'));
+		const sourcePath = path.join(directory, 'index.html');
+		writeFileSync(
+			sourcePath,
+			[
+				'<html>',
+				'<body>',
+				'<script type="text/ruby" src="main.rb"></script>',
+				'<script type="text/ruby">',
+				'a = 1',
+				'b = [1,',
+				'     2]',
+				'</script>',
+				'<script type="text/picoruby">c = 3</script>',
+				'</body>',
+				'</html>'
+			].join('\n')
+		);
+
+		try {
+			const messages = collectMessages('setBreakpoints', {
+				source: { path: sourcePath },
+				breakpoints: Array.from({ length: 11 }, (_, index) => ({ line: index + 1 }))
+			});
+			const response = messages.find((message) => message.type === 'response' && message.command === 'setBreakpoints');
+			const verifiedLines = response?.body?.breakpoints
+				.filter((breakpoint: { verified: boolean }) => breakpoint.verified)
+				.map((breakpoint: { line: number }) => breakpoint.line);
+
+			assert.deepStrictEqual(verifiedLines, [5, 6, 9]);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
 	test('uses the active program as the breakpoint key when source path is omitted', () => {
 		const adapter = createPicoRubyWasmInlineDebugAdapter() as any;
 
@@ -283,25 +402,27 @@ suite('debug session adapter', () => {
 		assert.strictEqual(nextMessages[0].event, 'output');
 		assert.ok(
 			typeof nextMessages[0].body?.output === 'string' &&
-			nextMessages[0].body.output.includes("dropped 'next' command")
+			nextMessages[0].body.output.includes("dropped 'step' command")
 		);
 		assert.strictEqual(nextMessages[1].type, 'response');
 		assert.strictEqual(nextMessages[1].command, 'next');
 		assert.strictEqual(nextMessages[1].success, true);
 		assert.strictEqual(nextMessages[1].body, undefined);
 
-		const stepInMessages = collectMessages('stepIn');
-		assert.strictEqual(stepInMessages.length, 2);
-		assert.strictEqual(stepInMessages[0].type, 'event');
-		assert.strictEqual(stepInMessages[0].event, 'output');
-		assert.ok(
-			typeof stepInMessages[0].body?.output === 'string' &&
-			stepInMessages[0].body.output.includes("dropped 'stepIn' command")
-		);
-		assert.strictEqual(stepInMessages[1].type, 'response');
-		assert.strictEqual(stepInMessages[1].command, 'stepIn');
-		assert.strictEqual(stepInMessages[1].success, true);
-		assert.strictEqual(stepInMessages[1].body, undefined);
+		for (const command of ['stepIn', 'stepOut'] as const) {
+			const stepMessages = collectMessages(command);
+			assert.strictEqual(stepMessages.length, 2);
+			assert.strictEqual(stepMessages[0].type, 'event');
+			assert.strictEqual(stepMessages[0].event, 'output');
+			assert.ok(
+				typeof stepMessages[0].body?.output === 'string' &&
+				stepMessages[0].body.output.includes("dropped 'step' command")
+			);
+			assert.strictEqual(stepMessages[1].type, 'response');
+			assert.strictEqual(stepMessages[1].command, command);
+			assert.strictEqual(stepMessages[1].success, true);
+			assert.strictEqual(stepMessages[1].body, undefined);
+		}
 	});
 
 	test('terminate and disconnect emit a terminated event before responding', () => {

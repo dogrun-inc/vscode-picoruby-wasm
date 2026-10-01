@@ -409,20 +409,27 @@ suite('debug session adapter', () => {
 		assert.strictEqual(nextMessages[1].success, true);
 		assert.strictEqual(nextMessages[1].body, undefined);
 
-		for (const command of ['stepIn', 'stepOut'] as const) {
-			const stepMessages = collectMessages(command);
-			assert.strictEqual(stepMessages.length, 2);
-			assert.strictEqual(stepMessages[0].type, 'event');
-			assert.strictEqual(stepMessages[0].event, 'output');
-			assert.ok(
-				typeof stepMessages[0].body?.output === 'string' &&
-				stepMessages[0].body.output.includes("dropped 'step' command")
-			);
-			assert.strictEqual(stepMessages[1].type, 'response');
-			assert.strictEqual(stepMessages[1].command, command);
-			assert.strictEqual(stepMessages[1].success, true);
-			assert.strictEqual(stepMessages[1].body, undefined);
-		}
+		const stepInMessages = collectMessages('stepIn');
+		assert.strictEqual(stepInMessages.length, 2);
+		assert.strictEqual(stepInMessages[0].type, 'event');
+		assert.strictEqual(stepInMessages[0].event, 'output');
+		assert.ok(
+			typeof stepInMessages[0].body?.output === 'string' &&
+			stepInMessages[0].body.output.includes("dropped 'step' command")
+		);
+		assert.strictEqual(stepInMessages[1].type, 'response');
+		assert.strictEqual(stepInMessages[1].command, 'stepIn');
+		assert.strictEqual(stepInMessages[1].success, true);
+		assert.strictEqual(stepInMessages[1].body, undefined);
+	});
+
+	test('stepOut is reported as unsupported', () => {
+		const messages = collectMessages('stepOut');
+
+		assert.strictEqual(messages.length, 1);
+		assert.strictEqual(messages[0].type, 'response');
+		assert.strictEqual(messages[0].command, 'stepOut');
+		assert.strictEqual(messages[0].success, false);
 	});
 
 	test('terminate and disconnect emit a terminated event before responding', () => {

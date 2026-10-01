@@ -529,7 +529,7 @@ class PicoRubyWasmMockSessionState {
 
 	/**
 	 * Requests the WebView runtime to run until the next instrumented line.
-	 * Step over, step in, and step out all map to this single-line step.
+	 * Step over and step in both map to this single-line step.
 	 */
 	stepRuntime(): void {
 		this.postControlMessage('step');
@@ -1245,16 +1245,6 @@ export class PicoRubyWasmLoggingDebugSession extends LoggingDebugSession {
 	}
 
 	/**
-	 * Handles DAP stepOut requests.
-	 *
-	 * @param response DAP response object.
-	 */
-	protected stepOutRequest(response: any): void {
-		this.state.stepRuntime();
-		this.sendResponse(response);
-	}
-
-	/**
 	 * Handles DAP setBreakpoints requests.
 	 *
 	 * @param response DAP response object.
@@ -1529,7 +1519,7 @@ class PicoRubyWasmInlineDebugAdapter implements vscode.DebugAdapter {
 				return;
 			case 'next':
 			case 'stepIn':
-			case 'stepOut':
+				// stepOut is intentionally unsupported: PicoRuby WASM exposes no step-out/finish API.
 				this.state.stepRuntime();
 				this.emit({
 					type: 'response',

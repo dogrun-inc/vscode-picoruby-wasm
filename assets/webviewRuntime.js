@@ -375,11 +375,58 @@ const CONTINUATION_START_PATTERN = /^(?:\.|&\.|&&|\|\||\)|\]|\}|\||(?:else|elsif
 const CONTINUATION_END_PATTERN = /(?:[,\\(\[{.=]|&&|\|\||[-+*\/%<>]|\b(?:and|or|not))$/;
 /** Heredoc opener; group 2 is the terminator identifier (any case, e.g. `<<~eof`). */
 const HEREDOC_START_PATTERN = /<<[~-]?(['"`]?)([A-Za-z_]\w*)\1/;
+/** Matches a require statement; expanded ones are replaced by the required file, so they never get a hook. */
+const REQUIRE_LINE_PATTERN = /^\s*require\s+['"]([^'"]+)['"]\s*(?:#.*)?$/;
+
+/**
+ * Scans one line tracking `"`, `'` and backtick string literals across lines.
+ * Returns the code portion with string contents and trailing comment removed, plus the quote
+ * that is still open at the end of the line. Percent literals and `?x` char literals are not tracked.
+ * @param {string} line Source line.
+ * @param {string|null} openQuote Quote character left open by the previous line.
+ * @returns {{ code: string, openQuote: string|null }}
+ */
+const scanRubyLine = (line, openQuote) => {
+	let code = '';
+	let quote = openQuote;
+	for (let index = 0; index < line.length; index += 1) {
+		const char = line[index];
+		if (quote !== null) {
+			if (char === '\\') {
+				index += 1;
+				continue;
+			}
+			if (char === quote) {
+				quote = null;
+				code += char;
+			}
+			continue;
+		}
+		if (char === '#') {
+			break;
+		}
+		if (char === '"' || char === "'" || char === '`') {
+			if (/<<[~-]?$/.test(code)) {
+				// Quoted heredoc identifier: keep it verbatim so HEREDOC_START_PATTERN can read it.
+				const end = line.indexOf(char, index + 1);
+				if (end > index) {
+					code += line.slice(index, end + 1);
+					index = end;
+					continue;
+				}
+			}
+			quote = char;
+		}
+		code += char;
+	}
+	return { code: code.trim(), openQuote: quote };
+};
 
 /**
  * Prefixes each executable combined line with a `$PicoRubyDebug.trace` hook.
  * Lines whose prefixing would break Ruby syntax (comments, continuations, closing keywords,
- * heredoc bodies, =begin blocks, after __END__) are left untouched. Line count is preserved.
+ * heredoc bodies, multi-line string literals, =begin blocks, after __END__) and require lines
+ * are left untouched. Line count is preserved.
  * @param {string[]} lines Combined Ruby source lines after require expansion.
  * @param {Array<{ path: string|null, line: number }>} entries Original position per combined line.
  * @param {object} allBreakpoints Map of VFS-relative paths to 1-based breakpoint lines.
@@ -396,6 +443,7 @@ const instrumentDebugLines = (lines, entries, allBreakpoints) => {
 
 	let previousCode = '';
 	let heredocTerminator = null;
+	let openQuote = null;
 	let inBlockComment = false;
 	let ended = false;
 
@@ -416,27 +464,33 @@ const instrumentDebugLines = (lines, entries, allBreakpoints) => {
 			inBlockComment = !/^=end\b/.test(line);
 			return line;
 		}
-		if (/^=begin\b/.test(line)) {
+		if (openQuote === null && /^=begin\b/.test(line)) {
 			inBlockComment = true;
 			return line;
 		}
-		if (trimmed === '__END__') {
+		if (openQuote === null && trimmed === '__END__') {
 			ended = true;
 			return line;
 		}
 
+		const startsInsideString = openQuote !== null;
+		const scanned = scanRubyLine(line, openQuote);
+		openQuote = scanned.openQuote;
+
 		const injectable =
 			entry && typeof entry.path === 'string' &&
+			!startsInsideString &&
 			isInjectableBreakpointLine(line) &&
+			!REQUIRE_LINE_PATTERN.test(line) &&
 			!CONTINUATION_START_PATTERN.test(trimmed) &&
 			!CONTINUATION_END_PATTERN.test(previousCode);
 
-		const heredoc = HEREDOC_START_PATTERN.exec(trimmed);
+		const heredoc = startsInsideString ? null : HEREDOC_START_PATTERN.exec(scanned.code);
 		if (heredoc) {
 			heredocTerminator = heredoc[2];
 		}
-		if (trimmed.length > 0 && !trimmed.startsWith('#')) {
-			previousCode = trimmed.replace(/\s#.*$/, '').trimEnd();
+		if (scanned.code.length > 0) {
+			previousCode = scanned.code;
 		}
 
 		if (!injectable) {
@@ -446,9 +500,6 @@ const instrumentDebugLines = (lines, entries, allBreakpoints) => {
 		return `${createTraceStatement(entry.path, entry.line, hasBreakpoint(entry.path, entry.line))} ${line}`;
 	});
 };
-
-/** Matches a local require statement that may be expanded from the VFS. */
-const REQUIRE_LINE_PATTERN = /^\s*require\s+['"]([^'"]+)['"]\s*(?:#.*)?$/;
 
 /**
  * Recursively expands local require statements while recording the original position of every line.
@@ -1136,6 +1187,7 @@ if (typeof module !== 'undefined' && module.exports) {
 		expandVfsRequires,
 		expandVfsRequireLines,
 		instrumentDebugLines,
+		scanRubyLine,
 		buildDebugTaskCode,
 		findBreakpointLines,
 		DEBUG_PRELUDE

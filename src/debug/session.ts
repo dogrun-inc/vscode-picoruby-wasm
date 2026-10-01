@@ -183,15 +183,61 @@ const CONTINUATION_START_PATTERN = /^(?:\.|&\.|&&|\|\||\)|\]|\}|\||(?:else|elsif
 const CONTINUATION_END_PATTERN = /(?:[,\\(\[{.=]|&&|\|\||[-+*\/%<>]|\b(?:and|or|not))$/;
 /** Heredoc opener; group 2 is the terminator identifier. */
 const HEREDOC_START_PATTERN = /<<[~-]?(['"`]?)([A-Za-z_]\w*)\1/;
+/** Matches a require statement; expanded ones are replaced by the required file, so they never get a hook. */
+const REQUIRE_LINE_PATTERN = /^\s*require\s+['"]([^'"]+)['"]\s*(?:#.*)?$/;
 /** Opening tag of an inline PicoRuby script block in HTML. */
 const RUBY_SCRIPT_OPEN_PATTERN = /<script\b[^>]*\btype=["'](?:text\/ruby|text\/picoruby)["'][^>]*>/i;
 /** Closing script tag. */
 const SCRIPT_CLOSE_PATTERN = /<\/script\s*>/i;
 
 /**
+ * Scans one line tracking `"`, `'` and backtick string literals across lines.
+ * Returns the code portion with string contents and trailing comment removed, plus the quote
+ * that is still open at the end of the line. Percent literals and `?x` char literals are not tracked.
+ *
+ * @param line Source line.
+ * @param openQuote Quote character left open by the previous line.
+ */
+function scanRubyLine(line: string, openQuote: string | null): { code: string; openQuote: string | null } {
+	let code = '';
+	let quote = openQuote;
+	for (let index = 0; index < line.length; index += 1) {
+		const char = line[index];
+		if (quote !== null) {
+			if (char === '\\') {
+				index += 1;
+				continue;
+			}
+			if (char === quote) {
+				quote = null;
+				code += char;
+			}
+			continue;
+		}
+		if (char === '#') {
+			break;
+		}
+		if (char === '"' || char === "'" || char === '`') {
+			if (/<<[~-]?$/.test(code)) {
+				// Quoted heredoc identifier: keep it verbatim so HEREDOC_START_PATTERN can read it.
+				const end = line.indexOf(char, index + 1);
+				if (end > index) {
+					code += line.slice(index, end + 1);
+					index = end;
+					continue;
+				}
+			}
+			quote = char;
+		}
+		code += char;
+	}
+	return { code: code.trim(), openQuote: quote };
+}
+
+/**
  * Computes the 1-based lines of a Ruby document that the WebView would instrument with a trace hook.
- * Comments, blank lines, closing keywords, continuation lines, heredoc bodies, =begin blocks and
- * everything after __END__ are excluded.
+ * Comments, blank lines, closing keywords, continuation lines, heredoc bodies, multi-line string
+ * literals, require lines, =begin blocks and everything after __END__ are excluded.
  *
  * @param lines Ruby source lines.
  * @param offset Added to each index to produce the reported line number.
@@ -200,6 +246,7 @@ const SCRIPT_CLOSE_PATTERN = /<\/script\s*>/i;
 function collectInjectableRubyLines(lines: string[], offset: number, eligible: Set<number>): void {
 	let previousCode = '';
 	let heredocTerminator: string | null = null;
+	let openQuote: string | null = null;
 	let inBlockComment = false;
 
 	for (let index = 0; index < lines.length; index += 1) {
@@ -216,26 +263,32 @@ function collectInjectableRubyLines(lines: string[], offset: number, eligible: S
 			inBlockComment = !/^=end\b/.test(line);
 			continue;
 		}
-		if (/^=begin\b/.test(line)) {
+		if (openQuote === null && /^=begin\b/.test(line)) {
 			inBlockComment = true;
 			continue;
 		}
-		if (trimmed === '__END__') {
+		if (openQuote === null && trimmed === '__END__') {
 			return;
 		}
 
+		const startsInsideString = openQuote !== null;
+		const scanned = scanRubyLine(line, openQuote);
+		openQuote = scanned.openQuote;
+
 		const injectable =
+			!startsInsideString &&
 			trimmed.length > 0 &&
 			!trimmed.startsWith('#') &&
+			!REQUIRE_LINE_PATTERN.test(line) &&
 			!CONTINUATION_START_PATTERN.test(trimmed) &&
 			!CONTINUATION_END_PATTERN.test(previousCode);
 
-		const heredoc = HEREDOC_START_PATTERN.exec(trimmed);
+		const heredoc = startsInsideString ? null : HEREDOC_START_PATTERN.exec(scanned.code);
 		if (heredoc) {
 			heredocTerminator = heredoc[2];
 		}
-		if (trimmed.length > 0 && !trimmed.startsWith('#')) {
-			previousCode = trimmed.replace(/\s#.*$/, '').trimEnd();
+		if (scanned.code.length > 0) {
+			previousCode = scanned.code;
 		}
 
 		if (injectable) {

@@ -307,6 +307,29 @@ suite('debug session adapter', () => {
 		assert.deepStrictEqual([...eligible].sort((left, right) => left - right), [1, 3, 6, 7, 9, 11, 14, 15, 22]);
 	});
 
+	test('rejects breakpoints inside multi-line strings and on require lines', () => {
+		// Keep in sync with the Jest test of the same fixture in webviewRuntime.test.js.
+		const lines = [
+			'require "js"',
+			'msg = "hello',
+			'  world"',
+			"note = 'it''s # not a comment'",
+			'# don\'t open a quote here',
+			'html = <<~\'EOS\'',
+			'  <p>it\'s</p>',
+			'EOS',
+			'puts msg + \\',
+			'  note',
+			'tpl = "a" + "b',
+			'c" + "d"',
+			'done'
+		];
+
+		const eligible = picoRubyWasmWebviewTestHooks.computeInjectableBreakpointLines(lines, false);
+
+		assert.deepStrictEqual([...eligible].sort((left, right) => left - right), [2, 4, 6, 9, 11, 13]);
+	});
+
 	test('verifies HTML breakpoints only inside inline PicoRuby script blocks', () => {
 		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-debug-'));
 		const sourcePath = path.join(directory, 'index.html');

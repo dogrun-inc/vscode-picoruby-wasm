@@ -237,6 +237,42 @@ describe('webviewRuntime.js Test Suite', () => {
 			expect(result[17]).toBe('end');
 		});
 
+		test('instrumentDebugLines should skip multi-line string bodies and require lines', () => {
+			// Keep in sync with the mocha parity test in debugSession.test.ts.
+			const lines = [
+				'require "js"',
+				'msg = "hello',
+				'  world"',
+				"note = 'it''s # not a comment'",
+				'# don\'t open a quote here',
+				'html = <<~\'EOS\'',
+				'  <p>it\'s</p>',
+				'EOS',
+				'puts msg + \\',
+				'  note',
+				'tpl = "a" + "b',
+				'c" + "d"',
+				'done'
+			];
+			const entries = lines.map((_, index) => ({ path: 'main.rb', line: index + 1 }));
+
+			const result = webviewRuntime.instrumentDebugLines(lines, entries, {});
+			const hooked = result
+				.map((line, index) => (line.startsWith('binding.irb if') ? index + 1 : null))
+				.filter((line) => line !== null);
+
+			expect(result).toHaveLength(lines.length);
+			expect(hooked).toEqual([2, 4, 6, 9, 11, 13]);
+		});
+
+		test('scanRubyLine should strip comments and string bodies while tracking open quotes', () => {
+			expect(webviewRuntime.scanRubyLine('x = "a # b" # c', null)).toEqual({ code: 'x = ""', openQuote: null });
+			expect(webviewRuntime.scanRubyLine('y = "open', null)).toEqual({ code: 'y = "', openQuote: '"' });
+			expect(webviewRuntime.scanRubyLine('still" + 1', '"')).toEqual({ code: '" + 1', openQuote: null });
+			expect(webviewRuntime.scanRubyLine('z = "esc\\" still', null)).toEqual({ code: 'z = "', openQuote: '"' });
+			expect(webviewRuntime.scanRubyLine("t = <<~'EOS'", null)).toEqual({ code: "t = <<~'EOS'", openQuote: null });
+		});
+
 		test('buildDebugTaskCode should prepend the prelude and offset the source map', () => {
 			const { code, sourceMap } = webviewRuntime.buildDebugTaskCode(
 				{ code: 'require "lib/helper"\nrun', filename: null, sourcePath: 'index.html', lineOffset: 10 },

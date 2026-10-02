@@ -345,6 +345,9 @@ suite('debug session adapter', () => {
 				'     2]',
 				'</script>',
 				'<script type="text/picoruby">c = 3</script>',
+				'<script data-type="text/ruby">not_ruby()</script>',
+				'<script type="text/ruby" data-src="missing.rb">d = 4</script>',
+				'<script type=text/ruby>e = 5</script>',
 				'</body>',
 				'</html>'
 			].join('\n')
@@ -353,14 +356,15 @@ suite('debug session adapter', () => {
 		try {
 			const messages = collectMessages('setBreakpoints', {
 				source: { path: sourcePath },
-				breakpoints: Array.from({ length: 11 }, (_, index) => ({ line: index + 1 }))
+				breakpoints: Array.from({ length: 14 }, (_, index) => ({ line: index + 1 }))
 			});
 			const response = messages.find((message) => message.type === 'response' && message.command === 'setBreakpoints');
 			const verifiedLines = response?.body?.breakpoints
 				.filter((breakpoint: { verified: boolean }) => breakpoint.verified)
 				.map((breakpoint: { line: number }) => breakpoint.line);
 
-			assert.deepStrictEqual(verifiedLines, [5, 6, 9]);
+			// data-type is not a Ruby script; data-src stays inline; unquoted type is accepted (as in the WebView).
+			assert.deepStrictEqual(verifiedLines, [5, 6, 9, 11, 12]);
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}

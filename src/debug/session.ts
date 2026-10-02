@@ -185,8 +185,10 @@ const CONTINUATION_END_PATTERN = /(?:[,\\(\[{.=]|&&|\|\||[-+*\/%<>]|\b(?:and|or|
 const HEREDOC_START_PATTERN = /<<[~-]?(['"`]?)([A-Za-z_]\w*)\1/;
 /** Matches a require statement; expanded ones are replaced by the required file, so they never get a hook. */
 const REQUIRE_LINE_PATTERN = /^\s*require\s+['"]([^'"]+)['"]\s*(?:#.*)?$/;
-/** Opening tag of an inline PicoRuby script block in HTML. */
-const RUBY_SCRIPT_OPEN_PATTERN = /<script\b[^>]*\btype=["'](?:text\/ruby|text\/picoruby)["'][^>]*>/i;
+/** Opening tag of a PicoRuby script block in HTML; attribute rules mirror RUBY_SCRIPT_TYPE_PATTERN in webviewRuntime.js. */
+const RUBY_SCRIPT_OPEN_PATTERN = /<script(\s[^>]*?)?\stype\s*=\s*["']?(?:text\/ruby|text\/picoruby)\b[^>]*>/i;
+/** External script marker; anchored so `data-src` does not match (mirrors SCRIPT_SRC_PATTERN). */
+const SCRIPT_SRC_ATTRIBUTE_PATTERN = /\ssrc\s*=/i;
 /** Closing script tag. */
 const SCRIPT_CLOSE_PATTERN = /<\/script\s*>/i;
 
@@ -319,7 +321,7 @@ function computeInjectableBreakpointLines(sourceLines: string[], isHtml: boolean
 		const line = sourceLines[index];
 		if (blockStart < 0) {
 			const open = RUBY_SCRIPT_OPEN_PATTERN.exec(line);
-			if (!open || /\bsrc\s*=/i.test(open[0])) {
+			if (!open || SCRIPT_SRC_ATTRIBUTE_PATTERN.test(open[0])) {
 				continue;
 			}
 			blockStart = index;

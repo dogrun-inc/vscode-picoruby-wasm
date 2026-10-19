@@ -3,13 +3,15 @@
 ![VSCode](https://img.shields.io/badge/VSCode->1.120-blue.svg?style=flat)
 ![PicoRuby](https://img.shields.io/badge/PicoRuby-4.0.3-red.svg?style=flat)
 
+[English](README.md) | [日本語](README-ja.md)
+
 # VSCode PicoRuby WASM
 
 Visual Studio CodeでPicoRubyを開発・デバッグするための拡張機能です。内蔵PicoRuby WASMのバージョンは **v4.0.3** です。
 
-本拡張機能では、PicoRubyコードの構文ハイライトや補完機能に加え、**VS Codeで現在開いているHTMLファイルをWebview上で動かしながら、埋め込まれたPicoRubyコードをインタラクティブにデバッグ実行**できます。
+本拡張機能では、PicoRubyコードの構文ハイライトや補完機能に加え、**VS Codeで現在開いているHTMLファイルをWebview上で動かしながら、埋め込まれたPicoRubyコードをインタラクティブにデバッグ実行**できます。複数の `.rb` ファイルに分割したプロジェクトにも対応しており、`require` はHTMLと同じディレクトリ配下のファイルから解決され、それらのファイル内でもブレークポイントとステップ実行が機能します。
 
-> **Note**: デバッガー機能は v0.2.0 より追加された機能です。現在はHTML（Webview）に埋め込まれたPicoRubyコードを中心に動作確認を行っています。
+> **Note**: v0.3.0 では、複数ファイル（`require`）のデバッグ、Step Into / Step Over、単一HTMLエクスポートが追加されました。不具合を見つけた際は GitHub Issue でお知らせください。
 
 ---
 
@@ -29,9 +31,17 @@ Visual Studio CodeでPicoRubyを開発・デバッグするための拡張機能
 ### 3. PicoRuby WASM デバッガー（PicoRuby v4.0.3 搭載）
 VS Codeのエディターで現在開いているHTMLファイルをWebviewパネルに描画しながら、内部のPicoRubyコードを同期実行・デバッグします。
 
-- **自動ブレークポイント注入**: 設定した行へ `binding.irb` を自動注入して実行を一時停止
+- **複数ファイル構成**: HTMLと同じディレクトリツリー内の `.rb` ファイルを仮想ファイルシステムに収集し、ローカルの `require` をそこから解決
+- **どこにでもブレークポイント**: HTML内のインラインスクリプトにも、`require` される `.rb` ファイルにも設置可能。停止時はVS Codeが元のファイルの元の行を開きます
+- **Step Into / Step Over**: 実行可能行を1行ずつ進み、`require` 先のファイル内の呼び出しにも追従
 - **変数スコープの確認**: 一時停止中のローカル変数（`Locals`）およびグローバル変数（`Globals`）のリアルタイム参照
-- **デバッグコンソールでの評価**: 停止中の変数を参照した式の動的評価
+- **デバッグコンソールでの評価**: 停止中のスコープで任意のPicoRuby式を評価
+
+### 4. 単一HTMLエクスポート
+HTML・収集した全 `.rb` ファイル・PicoRuby WASMランタイムを1つのHTMLファイルにまとめ、本拡張機能なしでブラウザから実行できる形で出力します。
+
+- **`PicoRuby: Export Single HTML`**: Rubyソースのまま同梱（`dist/index.html`）
+- **`PicoRuby: Export MRB HTML`**: RubyスクリプトをMRBバイトコードに事前コンパイルして同梱（`dist/index.mrb.html`）
 
 ---
 
@@ -116,15 +126,43 @@ VS Codeのエディターで現在開いているHTMLファイルをWebviewパ�
 
 * `program` に `${file}` を指定することで、現在アクティブなHTMLファイルを対象として実行できます。
 
+### 4. コードを複数ファイルに分割する
+
+デバッグ開始時に、HTMLファイルがあるディレクトリ（およびそのサブディレクトリ）内のすべての `.rb` ファイルが収集され、`require` はその集合に対して解決されます。
+
+| 記述 | 解決先 |
+|---|---|
+| `require 'lib/helper'` | HTMLのディレクトリを基準に `lib/helper.rb` または `lib/helper/index.rb` |
+| `require './helper'` / `require '../shared'` | `require` を書いたファイルからの相対パス |
+| `require 'js'` | そのまま（組み込みライブラリ） |
+
+典型的な構成（[sample/vfs-require](sample/vfs-require) 参照）:
+
+```
+project/
+├── index.html        <script type="text/ruby">require 'main'</script>
+├── main.rb           require './lib/message'; require 'ui/status_view'
+├── lib/
+│   └── message.rb
+└── ui/
+    └── status_view.rb
+```
+
+`<script type="text/ruby" src="main.rb"></script>` のようにHTMLから直接ファイルを参照することもできます。PicoRuby用の `<script>` タグが複数ある場合は文書順に実行されます。
+
+### 5. 単一HTMLとしてエクスポートする
+
+対象のHTMLをアクティブにした状態でコマンドパレットから（またはエクスプローラーで右クリックして）`PicoRuby: Export Single HTML` または `PicoRuby: Export MRB HTML` を実行します。結果は元のHTMLと同じ場所の `dist/` フォルダに出力されます。
+
 ---
 
 ## デバッガーの操作方法
 
 VS Code標準のデバッグインターフェースがそのまま利用できます。
 
-* **ブレークポイントの設定**: エディター左端（ガター）をクリックして赤丸を設置
+* **ブレークポイントの設定**: エディター左端（ガター）をクリックして赤丸を設置（HTMLファイルでも、HTMLのディレクトリ配下の `.rb` ファイルでも可）
 * **続行 (Continue)**: `F5`
-* **ステップ実行 (Step Over / Into)**: `F10` / `F11`
+* **ステップ実行 (Step Over / Into)**: `F10` / `F11`（どちらも次の実行可能行で停止します。制限事項を参照）
 * **変数確認**: デバッグサイドバーの `Variables` ビュー（`Locals` / `Globals`）を展開
 * **式の評価**: 停止中に `Debug Console` でPicoRubyの変数や式を入力して試行
 * **停止 (Stop)**: `Shift + F5`
@@ -133,9 +171,12 @@ VS Code標準のデバッグインターフェースがそのまま利用でき�
 
 ## デバッガーの仕様と制限事項
 
-* **実行対象**: エディターで開いているHTMLファイル内で、最初に見つかったPicoRuby用 `<script>` タグのコードが実行されます（複数の script タグの結合実行には未対応）。
-* **1行スクリプト**: `<script type="text/ruby">puts 'hi'</script>` のように開始・終了タグと同じ行に記述されたコードはサポート外です。コードは改行して記述してください。
-* **ブレークポイント設置不可の行**: 構文エラーを防ぐため、コメント行、空行、および特定の制御構文行（`else`, `elsif`, `when`, `rescue`, `ensure`, `end` など）には `binding.irb` が注入されず、停止対象外となります。
+* **動作の仕組み**: 実行前にローカルの `require` を1つのスクリプトに展開し、各実行可能行の先頭に元のファイル・行番号を記録する軽量なトレースフックを付加します。ブレークポイントとステップ実行はこのフックから `binding.irb` で一時停止するため、ユーザーコード自身のスコープで停止し、ローカル変数をそのまま参照できます。
+* **ブレークポイント設置不可の行**: フックを安全に付加できない行は未検証（白抜きの丸）として表示され、停止しません。対象: コメント行、空行、閉じキーワード（`else`, `elsif`, `when`, `rescue`, `ensure`, `end`）、継続行（`foo(a,` / `b)` の2行目など）、ヒアドキュメント本体、複数行文字列の本体、`=begin` ブロック、`require` 行、`__END__` 以降。
+* **セッション中のブレークポイント変更**: ブレークポイントはセッション開始時に確定します。デバッグ中に追加・削除した内容は次回起動時に反映されます（[#19](https://github.com/dogrun-inc/vscode-picoruby-wasm/issues/19)）。
+* **Step Over / Step Out**: PicoRuby WASM には呼び出し深度を考慮したステップAPIがないため、現在 Step Over は Step Into と同じ動作になり、Step Out は未対応です。
+* **複数行のパーセントリテラル・正規表現**: 複数行にまたがる `%w[...]`、`%q|...|`、`/.../` は追跡されず、構文エラーになる場合があります。1行に収めるか、ヒアドキュメントを使用してください（[#20](https://github.com/dogrun-inc/vscode-picoruby-wasm/issues/20)）。
+* **収集範囲**: 収集されるのはHTMLのディレクトリ配下の `.rb` ファイルのみです。それより外側のファイルは `require` もデバッグもできません。
 * **CSSの読み込み制限**: 外部URL（`https://` や `http://` など）を指定したCSSは、セキュリティ上の制限（CSP）により読み込まれません。
 * **セキュリティ保護**: 安全のため、`href="javascript:..."` 属性を持つHTMLリンクは表示前に除去されます。
 
@@ -143,7 +184,7 @@ VS Code標準のデバッグインターフェースがそのまま利用でき�
 
 ## リリース状況
 
-* **現在のバージョン**: `v0.2.0`（PicoRuby v4.0.3 搭載・デバッガー機能追加）
+* **現在のバージョン**: `v0.3.0`（PicoRuby v4.0.3 搭載・複数ファイル `require` デバッグ、ステップ実行、HTMLエクスポートを追加）
 
 不具合や機能要望がございましたら、GitHub Issueにてお知らせください。（日本語でOKです）
 

@@ -4,10 +4,11 @@ All notable changes to the PicoRuby WASM extension are documented in this file.
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-10-XX
+## [0.3.0] - 2026-10-20
 
 ### Added
 
+- Updated the bundled PicoRuby WASM runtime and `mrbc` compiler to v4.0.5
 - Multi-file projects: `.rb` files next to the debug target HTML are collected into a virtual file system (VFS), and local `require` statements (`require 'lib/helper'`, `require './helper'`) are resolved from it
 - Breakpoints in required `.rb` files and in every inline PicoRuby `<script>` block; stops are reported at the original file and line, so VS Code opens the correct file
 - Step Into / Step Over (`F11` / `F10`) that stop on the next executable line, including lines in required files

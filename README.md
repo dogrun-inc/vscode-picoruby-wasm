@@ -1,13 +1,13 @@
 ![PicoRuby](https://avatars.githubusercontent.com/u/82246354?s=100&v=4)
 
 ![VSCode](https://img.shields.io/badge/VSCode->1.120-blue.svg?style=flat)
-![PicoRuby](https://img.shields.io/badge/PicoRuby-4.0.3-red.svg?style=flat)
+![PicoRuby](https://img.shields.io/badge/PicoRuby-4.0.5-red.svg?style=flat)
 
 [English](README.md) | [日本語](README-ja.md)
 
 # VSCode PicoRuby WASM
 
-A Visual Studio Code extension for developing and debugging PicoRuby. Bundles PicoRuby WASM **v4.0.3**.
+A Visual Studio Code extension for developing and debugging PicoRuby. Bundles PicoRuby WASM **v4.0.5**.
 
 This extension provides syntax highlighting and code completion for PicoRuby, as well as **interactive debugging of PicoRuby code embedded in HTML files, running inside VS Code's Webview**. Projects split across multiple `.rb` files are supported: `require` statements are resolved from the files next to your HTML, and breakpoints and stepping work inside those files.
 
@@ -28,7 +28,7 @@ This extension provides syntax highlighting and code completion for PicoRuby, as
 - **Context-Aware Completion**: Supports `::` and `.` access patterns.
 - **Snippets**: Completion templates for common structures like `def` and `class`.
 
-### 3. PicoRuby WASM Debugger (Powered by PicoRuby v4.0.3)
+### 3. PicoRuby WASM Debugger (Powered by PicoRuby v4.0.5)
 Renders the currently open HTML file in VS Code's Webview panel while executing and debugging the embedded PicoRuby code in real time.
 
 - **Multi-file projects**: `.rb` files in the same directory tree as the HTML are collected into a virtual file system, and local `require` statements are resolved from it.
@@ -185,7 +185,7 @@ VS Code's standard debug interface works seamlessly:
 
 ## Release Status
 
-* **Current Version**: `v0.3.0` (Includes PicoRuby v4.0.3; adds multi-file `require` debugging, stepping, and HTML export)
+* **Current Version**: `v0.3.0` (Includes PicoRuby v4.0.5; adds multi-file `require` debugging, stepping, and HTML export)
 
 Please report bugs or feature requests on GitHub Issues:
 

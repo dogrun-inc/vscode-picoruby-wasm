@@ -1,13 +1,13 @@
 ![PicoRuby](https://avatars.githubusercontent.com/u/82246354?s=100&v=4)
 
 ![VSCode](https://img.shields.io/badge/VSCode->1.120-blue.svg?style=flat)
-![PicoRuby](https://img.shields.io/badge/PicoRuby-4.0.3-red.svg?style=flat)
+![PicoRuby](https://img.shields.io/badge/PicoRuby-4.0.5-red.svg?style=flat)
 
 [English](README.md) | [日本語](README-ja.md)
 
 # VSCode PicoRuby WASM
 
-Visual Studio CodeでPicoRubyを開発・デバッグするための拡張機能です。内蔵PicoRuby WASMのバージョンは **v4.0.3** です。
+Visual Studio CodeでPicoRubyを開発・デバッグするための拡張機能です。内蔵PicoRuby WASMのバージョンは **v4.0.5** です。
 
 本拡張機能では、PicoRubyコードの構文ハイライトや補完機能に加え、**VS Codeで現在開いているHTMLファイルをWebview上で動かしながら、埋め込まれたPicoRubyコードをインタラクティブにデバッグ実行**できます。複数の `.rb` ファイルに分割したプロジェクトにも対応しており、`require` はHTMLと同じディレクトリ配下のファイルから解決され、それらのファイル内でもブレークポイントとステップ実行が機能します。
 
@@ -28,7 +28,7 @@ Visual Studio CodeでPicoRubyを開発・デバッグするための拡張機能
 - **コンテキスト補完**: `::` や `.` アクセス形式に対応
 - **スニペット**: `def`, `class` などの基本構文入力補完
 
-### 3. PicoRuby WASM デバッガー（PicoRuby v4.0.3 搭載）
+### 3. PicoRuby WASM デバッガー（PicoRuby v4.0.5 搭載）
 VS Codeのエディターで現在開いているHTMLファイルをWebviewパネルに描画しながら、内部のPicoRubyコードを同期実行・デバッグします。
 
 - **複数ファイル構成**: HTMLと同じディレクトリツリー内の `.rb` ファイルを仮想ファイルシステムに収集し、ローカルの `require` をそこから解決
@@ -184,7 +184,7 @@ VS Code標準のデバッグインターフェースがそのまま利用でき�
 
 ## リリース状況
 
-* **現在のバージョン**: `v0.3.0`（PicoRuby v4.0.3 搭載・複数ファイル `require` デバッグ、ステップ実行、HTMLエクスポートを追加）
+* **現在のバージョン**: `v0.3.0`（PicoRuby v4.0.5 搭載・複数ファイル `require` デバッグ、ステップ実行、HTMLエクスポートを追加）
 
 不具合や機能要望がございましたら、GitHub Issueにてお知らせください。（日本語でOKです）
 

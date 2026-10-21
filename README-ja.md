@@ -141,7 +141,8 @@ HTML・収集した全 `.rb` ファイル・PicoRuby WASMランタイムを1つ�
 ```
 project/
 ├── index.html        <script type="text/ruby">require 'main'</script>
-├── main.rb           require './lib/message'; require 'ui/status_view'
+├── main.rb           require './lib/message'
+│                     require 'ui/status_view'
 ├── lib/
 │   └── message.rb
 └── ui/
@@ -152,7 +153,7 @@ project/
 
 ### 5. 単一HTMLとしてエクスポートする
 
-対象のHTMLをアクティブにした状態でコマンドパレットから（またはエクスプローラーで右クリックして）`PicoRuby: Export Single HTML` または `PicoRuby: Export MRB HTML` を実行します。結果は元のHTMLと同じ場所の `dist/` フォルダに出力されます。
+対象のHTMLをアクティブにした状態でコマンドパレットから `PicoRuby: Export Single HTML` または `PicoRuby: Export MRB HTML` を実行します。結果は元のHTMLと同じ場所の `dist/` フォルダに出力されます。
 
 ---
 

@@ -154,7 +154,7 @@ You can also reference a file directly from the HTML: `<script type="text/ruby" 
 
 ### 5. Export a Self-Contained HTML
 
-Open the Command Palette with the target HTML active (or right-click it in the Explorer) and run `PicoRuby: Export Single HTML` or `PicoRuby: Export MRB HTML`. The result is written to a `dist/` folder next to the source HTML.
+Open the Command Palette with the target HTML active and run `PicoRuby: Export Single HTML` or `PicoRuby: Export MRB HTML`. The result is written to a `dist/` folder next to the source HTML.
 
 ---
 

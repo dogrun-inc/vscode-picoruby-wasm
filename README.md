@@ -142,7 +142,8 @@ A typical layout (see [sample/vfs-require](sample/vfs-require)):
 ```
 project/
 ├── index.html        <script type="text/ruby">require 'main'</script>
-├── main.rb           require './lib/message'; require 'ui/status_view'
+├── main.rb           require './lib/message'
+│                     require 'ui/status_view'
 ├── lib/
 │   └── message.rb
 └── ui/

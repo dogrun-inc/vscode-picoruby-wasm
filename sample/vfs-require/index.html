@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>PicoRuby VFS require sample</title>
+    <style>
+      body {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        margin: 32px;
+        color: #1f2933;
+        background: #f7f4ed;
+      }
+
+      main {
+        max-width: 720px;
+      }
+
+      button {
+        padding: 8px 14px;
+        border: 1px solid #8a6f3d;
+        border-radius: 4px;
+        color: #fff;
+        background: #8a6f3d;
+        cursor: pointer;
+      }
+
+      #log {
+        min-height: 120px;
+        margin-top: 20px;
+        padding: 16px;
+        border: 1px solid #d2c4a3;
+        background: #fffaf0;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>PicoRuby VFS require sample</h1>
+      <p>This HTML entrypoint only requires main.rb. The rest is loaded from Ruby files collected into the debugger VFS.</p>
+      <button id="run-button">Run</button>
+      <div id="log">Ready.</div>
+    </main>
+
+    <script type="text/ruby">
+      require 'main'
+    </script>
+  </body>
+</html>

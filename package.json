@@ -1,8 +1,8 @@
 {
   "name": "picoruby-wasm",
   "displayName": "PicoRuby WASM",
-  "description": "Syntax highlighting and code completion support for PicoRuby in VS Code",
-  "version": "0.2.0",
+  "description": "Syntax highlighting, code completion, and a WebView-based debugger for PicoRuby WASM in VS Code",
+  "version": "0.3.0",
   "icon": "images/icon.png",
   "publisher": "dogrun-inc",
   "license": "MIT",
@@ -74,6 +74,14 @@
       {
         "command": "picoruby.disable",
         "title": "Disable PicoRuby for this workspace (remove .rb mapping)"
+      },
+      {
+        "command": "picoruby.exportSingleHtml",
+        "title": "PicoRuby: Export Single HTML"
+      },
+      {
+        "command": "picoruby.exportMrbHtml",
+        "title": "PicoRuby: Export MRB HTML"
       }
     ],
     "breakpoints": [
@@ -133,6 +141,11 @@
     "test:vscode": "vscode-test",
     "test:webview": "jest src/test/webviewRuntime.test.js",
     "test": "vscode-test && npm run test:webview"
+  },
+  "jest": {
+    "modulePathIgnorePatterns": [
+      "<rootDir>/.vscode-test"
+    ]
   },
   "dependencies": {
     "@vscode/debugadapter": "^1.68.0"

@@ -11,23 +11,23 @@ async function Module(moduleArg = {}) {
   // "30.0.0" -> 300000
   function humanReadableVersionToPacked(str) {
     str = str.split('-')[0]; // Remove any trailing part from e.g. "12.53.3-alpha"
-    var vers = str.split('.').slice(0, 3);
+    let vers = str.split('.').slice(0, 3);
     while(vers.length < 3) vers.push('00');
     vers = vers.map((n, i, arr) => n.padStart(2, '0'));
     return vers.join('');
   }
   // 300000 -> "30.0.0"
-  var packedVersionToHumanReadable = n => [n / 10000 | 0, (n / 100 | 0) % 100, n % 100].join('.');
+  const packedVersionToHumanReadable = n => [n / 10_000 | 0, (n / 100 | 0) % 100, n % 100].join('.');
 
-  var TARGET_NOT_SUPPORTED = 2147483647;
+  const TARGET_NOT_SUPPORTED = 2147483647;
 
   // Note: We use a typeof check here instead of optional chaining using
   // globalThis because older browsers might not have globalThis defined.
 
   // We skip the node version checking when running on Bun/Deno since the node
   // version they report doesn't seem to be useful.
-  if (typeof process !== 'undefined' && !process.versions?.bun && typeof Deno == "undefined") {
-    var currentNodeVersion = process.versions?.node ? humanReadableVersionToPacked(process.versions.node) : TARGET_NOT_SUPPORTED;
+  if (typeof process !== 'undefined' && !process.versions?.bun && typeof Deno === "undefined") {
+    const currentNodeVersion = process.versions?.node ? humanReadableVersionToPacked(process.versions.node) : TARGET_NOT_SUPPORTED;
     if (currentNodeVersion < TARGET_NOT_SUPPORTED) {
       throw new Error('not compiled for this environment (did you build to HTML and try to run it not on the web, or set ENVIRONMENT to something - like node - and run it someplace else - like on the web?)');
     }
@@ -36,22 +36,22 @@ async function Module(moduleArg = {}) {
     }
   }
 
-  var userAgent = typeof navigator !== 'undefined' && navigator.userAgent;
+  const userAgent = typeof navigator !== 'undefined' && navigator.userAgent;
   if (!userAgent) {
     return;
   }
 
-  var currentSafariVersion = userAgent.includes("Safari/") && !userAgent.includes("Chrome/") && userAgent.match(/Version\/(\d+\.?\d*\.?\d*)/) ? humanReadableVersionToPacked(userAgent.match(/Version\/(\d+\.?\d*\.?\d*)/)[1]) : TARGET_NOT_SUPPORTED;
+  const currentSafariVersion = userAgent.includes("Safari/") && !userAgent.includes("Chrome/") && userAgent.match(/Version\/(\d+\.?\d*\.?\d*)/) ? humanReadableVersionToPacked(userAgent.match(/Version\/(\d+\.?\d*\.?\d*)/)[1]) : TARGET_NOT_SUPPORTED;
   if (currentSafariVersion < 150000) {
     throw new Error(`This emscripten-generated code requires Safari v${ packedVersionToHumanReadable(150000) } (detected v${currentSafariVersion})`);
   }
 
-  var currentFirefoxVersion = userAgent.match(/Firefox\/(\d+(?:\.\d+)?)/) ? parseFloat(userAgent.match(/Firefox\/(\d+(?:\.\d+)?)/)[1]) : TARGET_NOT_SUPPORTED;
+  const currentFirefoxVersion = userAgent.match(/Firefox\/(\d+(?:\.\d+)?)/) ? parseFloat(userAgent.match(/Firefox\/(\d+(?:\.\d+)?)/)[1]) : TARGET_NOT_SUPPORTED;
   if (currentFirefoxVersion < 79) {
     throw new Error(`This emscripten-generated code requires Firefox v79 (detected v${currentFirefoxVersion})`);
   }
 
-  var currentChromeVersion = userAgent.match(/Chrome\/(\d+(?:\.\d+)?)/) ? parseFloat(userAgent.match(/Chrome\/(\d+(?:\.\d+)?)/)[1]) : TARGET_NOT_SUPPORTED;
+  const currentChromeVersion = userAgent.match(/Chrome\/(\d+(?:\.\d+)?)/) ? parseFloat(userAgent.match(/Chrome\/(\d+(?:\.\d+)?)/)[1]) : TARGET_NOT_SUPPORTED;
   if (currentChromeVersion < 85) {
     throw new Error(`This emscripten-generated code requires Chrome v85 (detected v${currentChromeVersion})`);
   }
@@ -230,7 +230,7 @@ var runtimeDebug = true; // Switch to false at runtime to disable logging at the
 
 // Used by XXXXX_DEBUG settings to output debug messages.
 function dbg(...args) {
-  if (!runtimeDebug && typeof runtimeDebug != 'undefined') return;
+  if (!runtimeDebug && typeof runtimeDebug !== 'undefined') return;
   // TODO(sbc): Make this configurable somehow.  Its not always convenient for
   // logging to show up as warnings.
   console.warn(...args);
@@ -238,15 +238,15 @@ function dbg(...args) {
 
 // Endianness check
 (() => {
-  var h16 = new Int16Array(1);
-  var h8 = new Int8Array(h16.buffer);
+  const h16 = new Int16Array(1);
+  const h8 = new Int8Array(h16.buffer);
   h16[0] = 0x6373;
   if (h8[0] !== 0x73 || h8[1] !== 0x63) abort('Runtime error: expected the system to be little-endian! (Run with -sSUPPORT_BIG_ENDIAN to bypass)');
 })();
 
 function consumedModuleProp(prop) {
-  var value = Module[prop];
-  var msg = `Attempt to modify \`Module.${prop}\` after it has already been processed.  This can happen, for example, when code is injected via '--post-js' rather than '--pre-js'`;
+  let value = Module[prop];
+  const msg = `Attempt to modify \`Module.${prop}\` after it has already been processed.  This can happen, for example, when code is injected via '--post-js' rather than '--pre-js'`;
   if (Array.isArray(value)) {
     value = new Proxy(value, {
       set(target, key, val) {
@@ -309,7 +309,7 @@ function unexportedRuntimeSymbol(sym) {
     Object.defineProperty(Module, sym, {
       configurable: true,
       get() {
-        var msg = `'${sym}' was not exported. add it to EXPORTED_RUNTIME_METHODS (see the Emscripten FAQ)`;
+        let msg = `'${sym}' was not exported. add it to EXPORTED_RUNTIME_METHODS (see the Emscripten FAQ)`;
         if (isExportedByForceFilesystem(sym)) {
           msg += '. Alternatively, forcing filesystem support (-sFORCE_FILESYSTEM) can export this for you';
         }
@@ -326,7 +326,7 @@ const stackCookie2 = 0x89BACDFE;
 
 // Initializes the stack cookie. Called at the startup of main and at the startup of each thread in pthreads mode.
 function writeStackCookie() {
-  var max = _emscripten_stack_get_end();
+  let max = _emscripten_stack_get_end();
   assert((max & 3) == 0);
   // If the stack ends at address zero we write our cookies 4 bytes into the
   // stack.  This prevents interference with SAFE_HEAP and ASAN which also
@@ -349,13 +349,13 @@ function u32ToHexString(num) {
 
 function checkStackCookie() {
   if (ABORT) return;
-  var max = _emscripten_stack_get_end();
+  let max = _emscripten_stack_get_end();
   // See writeStackCookie().
   if (max == 0) {
     max += 4;
   }
-  var val1 = HEAPU32[((max)>>2)];
-  var val2 = HEAPU32[(((max)+(4))>>2)];
+  const val1 = HEAPU32[((max)>>2)];
+  const val2 = HEAPU32[(((max)+(4))>>2)];
   if (val1 != stackCookie1 || val2 != stackCookie2) {
     abort(`Stack overflow! Stack cookie has been overwritten at ${ptrToString(max)}, expected hex dwords ${u32ToHexString(stackCookie2)} and ${u32ToHexString(stackCookie1)}, but received ${u32ToHexString(val2)} ${u32ToHexString(val1)}`);
   }
@@ -403,7 +403,7 @@ assert(globalThis.Int32Array && globalThis.Float64Array && Int32Array.prototype.
 function preRun() {
   var preRun = Module['preRun'];
   if (preRun) {
-    if (typeof preRun == 'function') preRun = [preRun];
+    if (typeof preRun === 'function') preRun = [preRun];
     onPreRuns.push(...preRun);
   }
   consumedModuleProp('preRun');
@@ -415,6 +415,8 @@ function preRun() {
 function initRuntime() {
   assert(!runtimeInitialized);
   runtimeInitialized = true;
+
+  setStackLimits();
 
   checkStackCookie();
 
@@ -438,7 +440,7 @@ function postRun() {
 
   var postRun = Module['postRun'];
   if (postRun) {
-    if (typeof postRun == 'function') postRun = [postRun];
+    if (typeof postRun === 'function') postRun = [postRun];
     onPostRuns.push(...postRun);
   }
   consumedModuleProp('postRun');
@@ -469,18 +471,7 @@ function abort(what) {
   // a trap or not based on a hidden field within the object. So at the moment
   // we don't have a way of throwing a wasm trap from JS. TODO Make a JS API that
   // allows this in the wasm spec.
-
-  // Suppress closure compiler warning here. Closure compiler's builtin extern
-  // definition for WebAssembly.RuntimeError claims it takes no arguments even
-  // though it can.
-  // TODO(https://github.com/google/closure-compiler/pull/3913): Remove if/when upstream closure gets fixed.
-  /** @suppress {checkTypes} */
-  var e = new WebAssembly.RuntimeError(what);
-
-  // Throw the error whether or not MODULARIZE is set because abort is used
-  // in code paths apart from instantiation where an exception is expected
-  // to be thrown when abort is called.
-  throw e;
+  throw new WebAssembly.RuntimeError(what);
 }
 
 function createExportWrapper(name, func, nargs) {
@@ -675,6 +666,12 @@ async function createWasm() {
       return '0x' + ptr.toString(16).padStart(8, '0');
     }
 
+  var setStackLimits = () => {
+      var stackLow = _emscripten_stack_get_base();
+      var stackHigh = _emscripten_stack_get_end();
+      ___set_stack_limits(stackLow, stackHigh);
+    };
+
   var stackRestore = (val) => __emscripten_stack_restore(val);
 
   var stackSave = () => _emscripten_stack_get_current();
@@ -774,7 +771,7 @@ async function createWasm() {
    * @return {string}
    */
   var UTF8ToString = (ptr, maxBytesToRead, ignoreNul) => {
-      assert(typeof ptr == 'number', `UTF8ToString expects a number (got ${typeof ptr})`);
+      assert(typeof ptr === 'number', `UTF8ToString expects a number (got ${typeof ptr})`);
       return ptr ? UTF8ArrayToString(HEAPU8, ptr, maxBytesToRead, ignoreNul) : '';
     };
   var ___assert_fail = (condition, filename, line, func) =>
@@ -794,6 +791,16 @@ async function createWasm() {
       return func;
     };
   var ___call_sighandler = (fp, sig) => getWasmTableEntry(fp)(sig);
+
+  
+  
+  var ___handle_stack_overflow = (requested) => {
+      var base = _emscripten_stack_get_base();
+      var end = _emscripten_stack_get_end();
+      abort(`stack overflow (Attempt to set SP to ${ptrToString(requested)}` +
+            `, with stack limits [${ptrToString(end)} - ${ptrToString(base)}` +
+            ']). If you require more stack space build with -sSTACK_SIZE=<bytes>');
+    };
 
   var PATH = {
   isAbs:(path) => path.charAt(0) === '/',
@@ -871,7 +878,7 @@ resolve:(...args) => {
       for (var i = args.length - 1; i >= -1 && !resolvedAbsolute; i--) {
         var path = (i >= 0) ? args[i] : FS.cwd();
         // Skip empty and invalid entries
-        if (typeof path != 'string') {
+        if (typeof path !== 'string') {
           throw new TypeError('Arguments to path.resolve must be strings');
         } else if (!path) {
           return ''; // an invalid portion invalidates the whole thing
@@ -1072,6 +1079,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
             if (result === null || result === undefined) break;
             bytesRead++;
             buffer[offset+i] = result;
+            // We currently only support canonical mode (ICANON), where
+            // read(2) returns as soon as a line delimiter is read.
+            if (result === 10) break;
           }
           if (bytesRead) {
             stream.node.atime = Date.now();
@@ -1172,7 +1182,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   mount(mount) {
         return MEMFS.createNode(null, '/', 16895, 0);
       },
-  createNode(parent, name, mode, dev) {
+  createNode(parent, name, mode, dev = undefined) {
         if (FS.isBlkdev(mode) || FS.isFIFO(mode)) {
           // not supported
           throw new FS.ErrnoError(63);
@@ -1266,7 +1276,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // For small filesizes (<1MB), perform size*2 geometric increase, but for
         // large sizes, do a much more conservative size*1.125 increase to avoid
         // overshooting the allocation cap by a very large margin.
-        var CAPACITY_DOUBLING_MAX = 1024 * 1024;
+        const CAPACITY_DOUBLING_MAX = 1024 * 1024;
         newCapacity = Math.max(newCapacity, (prevCapacity * (prevCapacity < CAPACITY_DOUBLING_MAX ? 2.0 : 1.125)) >>> 0);
         if (prevCapacity) newCapacity = Math.max(newCapacity, 256); // At minimum allocate 256b for each file when expanding.
         var oldContents = MEMFS.getFileDataAsTypedArray(node);
@@ -1322,7 +1332,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   lookup(parent, name) {
           throw new FS.ErrnoError(44);
         },
-  mknod(parent, name, mode, dev) {
+  mknod(parent, name, mode, dev = undefined) {
           return MEMFS.createNode(parent, name, mode, dev);
         },
   rename(old_node, new_dir, new_name) {
@@ -1330,14 +1340,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           try {
             new_node = FS.lookupNode(new_dir, new_name);
           } catch (e) {}
-          if (new_node) {
-            if (FS.isDir(old_node.mode)) {
-              // if we're overwriting a directory at new_name, make sure it's empty.
-              for (var i in new_node.contents) {
-                throw new FS.ErrnoError(55);
-              }
+          if (new_node && FS.isDir(old_node.mode)) {
+            // if we're overwriting a directory at new_name, make sure it's empty.
+            for (var i in new_node.contents) {
+              throw new FS.ErrnoError(55);
             }
-            FS.hashRemoveNode(new_node);
           }
           // do the internal rewiring
           delete old_node.parent.contents[old_node.name];
@@ -1466,7 +1473,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   };
   
   var FS_modeStringToFlags = (str) => {
-      if (typeof str != 'string') return str;
+      if (typeof str !== 'string') return str;
       var flagModes = {
         'r': 0,
         'r+': 2,
@@ -1476,14 +1483,14 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         'a+': 1024 | 64 | 2,
       };
       var flags = flagModes[str];
-      if (typeof flags == 'undefined') {
+      if (typeof flags === 'undefined') {
         throw new Error(`Unknown file open mode: ${str}`);
       }
       return flags;
     };
   
   var FS_fileDataToTypedArray = (data) => {
-      if (typeof data == 'string') {
+      if (typeof data === 'string') {
         data = intArrayFromString(data, true);
       }
       if (!data.subarray) {
@@ -1628,6 +1635,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       'ESTRPIPE': 135,
     };
   
+  
   var asyncLoad = async (url) => {
       var arrayBuffer = await readAsync(url);
       assert(arrayBuffer, `Loading data file "${url}" failed (no arrayBuffer).`);
@@ -1706,7 +1714,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           if (shown) {
             err('(end of list)');
           }
-        }, 10000);
+        }, 10_000);
       }
     };
   
@@ -1714,7 +1722,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var preloadPlugins = [];
   var FS_handledByPreloadPlugin = async (byteArray, fullname) => {
       // Ensure plugins are ready.
-      if (typeof Browser != 'undefined') Browser.init();
+      if (typeof Browser !== 'undefined') Browser.init();
   
       for (var plugin of preloadPlugins) {
         if (plugin['canHandle'](fullname)) {
@@ -1735,7 +1743,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
       try {
         var byteArray = url;
-        if (typeof url == 'string') {
+        if (typeof url === 'string') {
           byteArray = await asyncLoad(url);
         }
   
@@ -1759,11 +1767,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   },
   streams:[],
   nextInode:1,
-  nameTable:null,
+  nameTable:[],
   currentPath:"/",
   initialized:false,
   ignorePermissions:true,
-  filesystems:null,
   syncFSRequests:0,
   ErrnoError:class extends Error {
         name = 'ErrnoError';
@@ -2028,8 +2035,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // if we failed to find it in the cache, call into the VFS
         return FS.lookup(parent, name);
       },
-  createNode(parent, name, mode, rdev) {
-        assert(typeof parent == 'object')
+  createNode(parent, name, mode, rdev = undefined) {
+        assert(typeof parent === 'object')
         var node = new FS.FSNode(parent, name, mode, rdev);
   
         FS.hashAddNode(node);
@@ -2238,7 +2245,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return mounts;
       },
   syncfs(populate, callback) {
-        if (typeof populate == 'function') {
+        if (typeof populate === 'function') {
           callback = populate;
           populate = false;
         }
@@ -2281,7 +2288,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
       },
   mount(type, opts, mountpoint) {
-        if (typeof type == 'string') {
+        if (typeof type === 'string') {
           // The filesystem was not included, and instead we have an error
           // message stored in the variable.
           throw type;
@@ -2403,9 +2410,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var rtn = {
           bsize: 4096,
           frsize: 4096,
-          blocks: 1e6,
-          bfree: 5e5,
-          bavail: 5e5,
+          blocks: 1_000_000,
+          bfree: 500_000,
+          bavail: 500_000,
           files: FS.nextInode,
           ffree: FS.nextInode - 1,
           fsid: 42,
@@ -2428,7 +2435,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         mode |= 16384;
         return FS.mknod(path, mode, 0);
       },
-  mkdirTree(path, mode) {
+  mkdirTree(path, mode = 0o777) {
         var dirs = path.split('/');
         var d = '';
         for (var dir of dirs) {
@@ -2442,8 +2449,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           }
         }
       },
-  mkdev(path, mode, dev) {
-        if (typeof dev == 'undefined') {
+  mkdev(path, mode, dev = undefined) {
+        if (typeof dev === 'undefined') {
           dev = mode;
           mode = 0o666;
         }
@@ -2562,6 +2569,11 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         // do the underlying fs rename
         try {
           old_dir.node_ops.rename(old_node, new_dir, new_name);
+          // The replaced node is stale now. Evict it only after the rename
+          // succeeded: backends like NODEFS report node.id as st_ino.
+          if (new_node) {
+            FS.hashRemoveNode(new_node);
+          }
           // update old node (we do this here to avoid each backend
           // needing to)
           old_node.parent = new_dir;
@@ -2632,7 +2644,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
         return link.node_ops.readlink(link);
       },
-  stat(path, dontFollow) {
+  stat(path, dontFollow = false) {
         var lookup = FS.lookupPath(path, { follow: !dontFollow });
         var node = lookup.node;
         var getattr = FS.checkOpExists(node.node_ops.getattr, 63);
@@ -2650,16 +2662,16 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   lstat(path) {
         return FS.stat(path, true);
       },
-  doChmod(stream, node, mode, dontFollow) {
+  doChmod(stream, node, mode, dontFollow = false) {
         FS.doSetAttr(stream, node, {
           mode: (mode & 4095) | (node.mode & ~4095),
           ctime: Date.now(),
           dontFollow
         });
       },
-  chmod(path, mode, dontFollow) {
+  chmod(path, mode, dontFollow = false) {
         var node;
-        if (typeof path == 'string') {
+        if (typeof path === 'string') {
           var lookup = FS.lookupPath(path, { follow: !dontFollow });
           node = lookup.node;
         } else {
@@ -2674,16 +2686,16 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var stream = FS.getStreamChecked(fd);
         FS.doChmod(stream, stream.node, mode, false);
       },
-  doChown(stream, node, dontFollow) {
+  doChown(stream, node, dontFollow = false) {
         FS.doSetAttr(stream, node, {
           timestamp: Date.now(),
           dontFollow
           // we ignore the uid / gid for now
         });
       },
-  chown(path, uid, gid, dontFollow) {
+  chown(path, uid, gid, dontFollow = false) {
         var node;
-        if (typeof path == 'string') {
+        if (typeof path === 'string') {
           var lookup = FS.lookupPath(path, { follow: !dontFollow });
           node = lookup.node;
         } else {
@@ -2719,7 +2731,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           throw new FS.ErrnoError(28);
         }
         var node;
-        if (typeof path == 'string') {
+        if (typeof path === 'string') {
           var lookup = FS.lookupPath(path, { follow: true });
           node = lookup.node;
         } else {
@@ -2734,7 +2746,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
         FS.doTruncate(stream, stream.node, len);
       },
-  utime(path, atime, mtime, dontFollow) {
+  utime(path, atime, mtime, dontFollow = false) {
         var lookup = FS.lookupPath(path, { follow: !dontFollow });
         FS.doSetAttr(null, lookup.node, {
           atime: atime,
@@ -2754,7 +2766,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
         var node;
         var isDirPath;
-        if (typeof path == 'object') {
+        if (typeof path === 'object') {
           node = path;
         } else {
           isDirPath = path.endsWith('/');
@@ -2873,7 +2885,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         stream.ungotten = [];
         return stream.position;
       },
-  read(stream, buffer, offset, length, position) {
+  read(stream, buffer, offset, length, position = undefined) {
         assert(offset >= 0);
         if (length < 0 || position < 0) {
           throw new FS.ErrnoError(28);
@@ -2890,7 +2902,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         if (!stream.stream_ops.read) {
           throw new FS.ErrnoError(28);
         }
-        var seeking = typeof position != 'undefined';
+        var seeking = typeof position !== 'undefined';
         if (!seeking) {
           position = stream.position;
         } else if (!stream.seekable) {
@@ -2900,7 +2912,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         if (!seeking) stream.position += bytesRead;
         return bytesRead;
       },
-  write(stream, buffer, offset, length, position, canOwn) {
+  write(stream, buffer, offset, length, position = undefined, canOwn = undefined) {
         assert(offset >= 0);
         assert(buffer.subarray, 'FS.write expects a TypedArray');
         if (length < 0 || position < 0) {
@@ -2922,7 +2934,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           // seek to the end before writing in append mode
           FS.llseek(stream, 0, 2);
         }
-        var seeking = typeof position != 'undefined';
+        var seeking = typeof position !== 'undefined';
         if (!seeking) {
           position = stream.position;
         } else if (!stream.seekable) {
@@ -2969,8 +2981,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return stream.stream_ops.ioctl(stream, cmd, arg);
       },
   readFile(path, opts = {}) {
-        opts.flags = opts.flags ?? 0;
-        opts.encoding = opts.encoding ?? 'binary';
+        opts.flags ??= 0;
+        opts.encoding ??= 'binary';
         if (opts.encoding !== 'utf8' && opts.encoding !== 'binary') {
           abort(`Invalid encoding type "${opts.encoding}"`);
         }
@@ -2986,7 +2998,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return buf;
       },
   writeFile(path, data, opts = {}) {
-        opts.flags = opts.flags ?? 577;
+        opts.flags ??= 577;
         var stream = FS.open(path, opts.flags, opts.mode);
         data = FS_fileDataToTypedArray(data);
         FS.write(stream, data, 0, data.byteLength, undefined, opts.canOwn);
@@ -3115,19 +3127,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         assert(stderr.fd === 2, `invalid handle for stderr (${stderr.fd})`);
       },
   staticInit() {
-        FS.nameTable = new Array(4096);
+        FS.nameTable.length = 4096;
   
         FS.mount(MEMFS, {}, '/');
   
         FS.createDefaultDirectories();
         FS.createDefaultDevices();
         FS.createSpecialDirectories();
-  
-        FS.filesystems = {
-          'MEMFS': MEMFS,
-        };
       },
-  init(input, output, error) {
+  init(input = undefined, output = undefined, error = undefined) {
         assert(!FS.initialized, 'FS.init was previously called. If you want to initialize later with custom parameters, remove any earlier calls (note that one is automatically added to the generated code)');
         FS.initialized = true;
   
@@ -3149,14 +3157,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           }
         }
       },
-  findObject(path, dontResolveLastLink) {
-        var ret = FS.analyzePath(path, dontResolveLastLink);
-        if (!ret.exists) {
-          return null;
-        }
-        return ret.object;
-      },
-  analyzePath(path, dontResolveLastLink) {
+  analyzePath(path, dontResolveLastLink = false) {
+        warnOnce('FS.analyzePath is deprecated; use FS.lookupPath or FS.stat instead');
         // operate from within the context of the symlink's target
         try {
           var lookup = FS.lookupPath(path, { follow: !dontResolveLastLink });
@@ -3184,8 +3186,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         };
         return ret;
       },
-  createPath(parent, path, canRead, canWrite) {
-        parent = typeof parent == 'string' ? parent : FS.getPath(parent);
+  createPath(parent, path, canRead = undefined, canWrite = undefined) {
+        parent = typeof parent === 'string' ? parent : FS.getPath(parent);
         var parts = path.split('/').reverse();
         while (parts.length) {
           var part = parts.pop();
@@ -3200,15 +3202,15 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         }
         return current;
       },
-  createFile(parent, name, properties, canRead, canWrite) {
-        var path = PATH.join2(typeof parent == 'string' ? parent : FS.getPath(parent), name);
+  createFile(parent, name, properties, canRead = undefined, canWrite = undefined) {
+        var path = PATH.join2(typeof parent === 'string' ? parent : FS.getPath(parent), name);
         var mode = FS_getMode(canRead, canWrite);
         return FS.create(path, mode);
       },
-  createDataFile(parent, name, data, canRead, canWrite, canOwn) {
+  createDataFile(parent, name, data = undefined, canRead = undefined, canWrite = undefined, canOwn = undefined) {
         var path = name;
         if (parent) {
-          parent = typeof parent == 'string' ? parent : FS.getPath(parent);
+          parent = typeof parent === 'string' ? parent : FS.getPath(parent);
           path = name ? PATH.join2(parent, name) : parent;
         }
         var mode = FS_getMode(canRead, canWrite);
@@ -3223,8 +3225,8 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           FS.chmod(node, mode);
         }
       },
-  createDevice(parent, name, input, output) {
-        var path = PATH.join2(typeof parent == 'string' ? parent : FS.getPath(parent), name);
+  createDevice(parent, name, input = undefined, output = undefined) {
+        var path = PATH.join2(typeof parent === 'string' ? parent : FS.getPath(parent), name);
         var mode = FS_getMode(!!input, !!output);
         FS.createDevice.major ??= 64;
         var dev = FS.makedev(FS.createDevice.major++, 0);
@@ -3289,7 +3291,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
           }
         }
       },
-  createLazyFile(parent, name, url, canRead, canWrite) {
+  createLazyFile(parent, name, url, canRead = undefined, canWrite = undefined) {
         // Lazy chunked Uint8Array (implements get and length from Uint8Array).
         // Actual getting is abstracted away for eventual reuse.
         class LazyUint8Array {
@@ -3349,10 +3351,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
               var start = chunkNum * chunkSize;
               var end = (chunkNum+1) * chunkSize - 1; // including this byte
               end = Math.min(end, datalength-1); // if datalength-1 is selected, this is the last block
-              if (typeof lazyArray.chunks[chunkNum] == 'undefined') {
+              if (typeof lazyArray.chunks[chunkNum] === 'undefined') {
                 lazyArray.chunks[chunkNum] = doXHR(start, end);
               }
-              if (typeof lazyArray.chunks[chunkNum] == 'undefined') abort('doXHR failed!');
+              if (typeof lazyArray.chunks[chunkNum] === 'undefined') abort('doXHR failed!');
               return lazyArray.chunks[chunkNum];
             });
   
@@ -3459,7 +3461,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var HEAP64;
   var SYSCALLS = {
   currentUmask:18,
-  calculateAt(dirfd, path, allowEmpty) {
+  calculateAt(dirfd, path, allowEmpty = false) {
         if (PATH.isAbs(path)) {
           return path;
         }
@@ -3541,7 +3543,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       FS.chdir(path);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3554,7 +3556,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       FS.chmod(path, mode);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3566,7 +3568,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       var old = SYSCALLS.getStreamFromFD(fd);
       return FS.dupStream(old).fd;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3588,7 +3590,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }
       return stream.fd;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3653,7 +3655,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }
       return -28;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3664,7 +3666,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
       return SYSCALLS.writeStat(buf, FS.fstat(fd));
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3684,7 +3686,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       FS.ftruncate(fd, length);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   ;
@@ -3693,7 +3695,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
   
   var stringToUTF8 = (str, outPtr, maxBytesToWrite) => {
-      assert(typeof maxBytesToWrite == 'number', 'stringToUTF8 requires a third parameter that specifies the length of the output buffer');
+      assert(typeof maxBytesToWrite === 'number', 'stringToUTF8 requires a third parameter that specifies the length of the output buffer');
       return stringToUTF8Array(str, HEAPU8, outPtr, maxBytesToWrite);
     };
   function ___syscall_getcwd(buf, size) {
@@ -3706,7 +3708,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       stringToUTF8(cwd, buf, size);
       return cwdLengthInBytes;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3770,7 +3772,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       FS.llseek(stream, idx * struct_size, 0);
       return pos;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3871,7 +3873,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         default: return -28; // not supported
       }
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3883,7 +3885,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       path = SYSCALLS.getStr(path);
       return SYSCALLS.writeStat(buf, FS.lstat(path));
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3895,10 +3897,10 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       path = SYSCALLS.getStr(path);
       path = SYSCALLS.calculateAt(dirfd, path);
       mode &= ~SYSCALLS.currentUmask;
-      FS.mkdir(path, mode, 0);
+      FS.mkdir(path, mode);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3915,7 +3917,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       path = SYSCALLS.calculateAt(dirfd, path, allowEmpty);
       return SYSCALLS.writeStat(buf, nofollow ? FS.lstat(path) : FS.stat(path));
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -3934,7 +3936,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }
       return FS.open(path, flags, mode).fd;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -4246,7 +4248,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -4280,7 +4282,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       if (!count && timeout != 0) warnOnce('non-zero poll() timeout not supported: ' + timeout)
       return count;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -4291,7 +4293,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   
       return doPollSync(fds, nfds);
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -4316,7 +4318,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       HEAP8[buf+len] = endChar;
       return len;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -4332,7 +4334,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       FS.rename(oldpath, newpath);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -4345,7 +4347,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       FS.rmdir(path);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -4357,7 +4359,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       path = SYSCALLS.getStr(path);
       return SYSCALLS.writeStat(buf, FS.stat(path));
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -4372,7 +4374,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       FS.symlink(target, linkpath);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -4385,11 +4387,24 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       SYSCALLS.currentUmask = mask;
       return old;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
   
+
+  var ___syscall_uname = (buf) => {
+      if (!buf) {
+        return -21;
+      }
+      var copyString = (offset, value) => stringToUTF8(value, buf + offset, 65);
+      copyString(0, 'Emscripten');
+      copyString(65, 'emscripten');
+      copyString(130, '6.0.13');
+      copyString(195, '#1');
+      copyString(260, 'wasm32');
+      return 0;
+    };
 
   function ___syscall_unlinkat(dirfd, path, flags) {
   try {
@@ -4405,7 +4420,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       }
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   }
@@ -4500,7 +4515,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         var nonDstOffset = Math.max(winterOffset, summerOffset);
         var trueOffset = dst > 0 ? dstOffset : nonDstOffset;
         // Don't try setMinutes(date.getMinutes() + ...) -- it's messed up.
-        date.setTime(date.getTime() + (trueOffset - guessedOffset)*60000);
+        date.setTime(date.getTime() + (trueOffset - guessedOffset)*60_000);
         if (isNaN(date.getTime())) {
           return -1;
         }
@@ -4536,7 +4551,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         SYSCALLS.doMsync(addr, stream, len, flags, offset);
       }
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   ;
@@ -4623,7 +4638,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         return 52;
       }
       // "now" is in ms, and wasi times are in ns.
-      var nsec = Math.round(now * 1000 * 1000);
+      var nsec = Math.round(now * 1_000_000);
       HEAP64[((ptime)>>3)] = BigInt(nsec);
       return 0;
     ;
@@ -4854,7 +4869,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       FS.close(stream);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   }
@@ -4884,7 +4899,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       HEAP64[(((pbuf)+(16))>>3)] = BigInt(rightsInheriting);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   }
@@ -4913,7 +4928,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
         if (curr < 0) return -1;
         ret += curr;
         if (curr < len) break; // nothing more to read
-        if (typeof offset != 'undefined') {
+        if (typeof offset !== 'undefined') {
           offset += curr;
         }
       }
@@ -4934,7 +4949,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       HEAPU32[((pnum)>>2)] = num;
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   ;
@@ -4981,7 +4996,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       HEAPU32[((pnum)>>2)] = num;
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   ;
@@ -4997,7 +5012,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       HEAPU32[((pnum)>>2)] = num;
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   }
@@ -5018,7 +5033,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       if (stream.getdents && !offset && whence === 0) stream.getdents = null; // reset readdir state
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   ;
@@ -5031,7 +5046,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       var rtn = stream.stream_ops?.fsync?.(stream);
       return rtn;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   }
@@ -5047,7 +5062,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       HEAPU32[((pnum)>>2)] = num;
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
+    if (typeof FS === 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   }
@@ -5244,24 +5259,24 @@ if (Module['printErr']) err = Module['printErr'];
   if (Module['thisProgram']) thisProgram = Module['thisProgram'];
 
   // Assertions on removed incoming Module JS APIs.
-  assert(typeof Module['memoryInitializerPrefixURL'] == 'undefined', 'Module.memoryInitializerPrefixURL option was removed, use Module.locateFile instead');
-  assert(typeof Module['pthreadMainPrefixURL'] == 'undefined', 'Module.pthreadMainPrefixURL option was removed, use Module.locateFile instead');
-  assert(typeof Module['cdInitializerPrefixURL'] == 'undefined', 'Module.cdInitializerPrefixURL option was removed, use Module.locateFile instead');
-  assert(typeof Module['filePackagePrefixURL'] == 'undefined', 'Module.filePackagePrefixURL option was removed, use Module.locateFile instead');
-  assert(typeof Module['read'] == 'undefined', 'Module.read option was removed');
-  assert(typeof Module['readAsync'] == 'undefined', 'Module.readAsync option was removed (modify readAsync in JS)');
-  assert(typeof Module['readBinary'] == 'undefined', 'Module.readBinary option was removed (modify readBinary in JS)');
-  assert(typeof Module['setWindowTitle'] == 'undefined', 'Module.setWindowTitle option was removed (modify emscripten_set_window_title in JS)');
-  assert(typeof Module['TOTAL_MEMORY'] == 'undefined', 'Module.TOTAL_MEMORY has been renamed Module.INITIAL_MEMORY');
-  assert(typeof Module['ENVIRONMENT'] == 'undefined', 'Module.ENVIRONMENT has been deprecated. To force the environment, use the ENVIRONMENT compile-time option (for example, -sENVIRONMENT=web or -sENVIRONMENT=node)');
-  assert(typeof Module['STACK_SIZE'] == 'undefined', 'STACK_SIZE can no longer be set at runtime.  Use -sSTACK_SIZE at link time')
+  assert(typeof Module['memoryInitializerPrefixURL'] === 'undefined', 'Module.memoryInitializerPrefixURL option was removed, use Module.locateFile instead');
+  assert(typeof Module['pthreadMainPrefixURL'] === 'undefined', 'Module.pthreadMainPrefixURL option was removed, use Module.locateFile instead');
+  assert(typeof Module['cdInitializerPrefixURL'] === 'undefined', 'Module.cdInitializerPrefixURL option was removed, use Module.locateFile instead');
+  assert(typeof Module['filePackagePrefixURL'] === 'undefined', 'Module.filePackagePrefixURL option was removed, use Module.locateFile instead');
+  assert(typeof Module['read'] === 'undefined', 'Module.read option was removed');
+  assert(typeof Module['readAsync'] === 'undefined', 'Module.readAsync option was removed (modify readAsync in JS)');
+  assert(typeof Module['readBinary'] === 'undefined', 'Module.readBinary option was removed (modify readBinary in JS)');
+  assert(typeof Module['setWindowTitle'] === 'undefined', 'Module.setWindowTitle option was removed (modify emscripten_set_window_title in JS)');
+  assert(typeof Module['TOTAL_MEMORY'] === 'undefined', 'Module.TOTAL_MEMORY has been renamed Module.INITIAL_MEMORY');
+  assert(typeof Module['ENVIRONMENT'] === 'undefined', 'Module.ENVIRONMENT has been deprecated. To force the environment, use the ENVIRONMENT compile-time option (for example, -sENVIRONMENT=web or -sENVIRONMENT=node)');
+  assert(typeof Module['STACK_SIZE'] === 'undefined', 'STACK_SIZE can no longer be set at runtime.  Use -sSTACK_SIZE at link time')
   // If memory is defined in wasm, the user can't provide it, or set INITIAL_MEMORY
-  assert(typeof Module['wasmMemory'] == 'undefined', 'Use of `wasmMemory` detected.  Use -sIMPORTED_MEMORY to define wasmMemory externally');
-  assert(typeof Module['INITIAL_MEMORY'] == 'undefined', 'Detected runtime INITIAL_MEMORY setting.  Use -sIMPORTED_MEMORY to define wasmMemory dynamically');
+  assert(typeof Module['wasmMemory'] === 'undefined', 'Use of `wasmMemory` detected.  Use -sIMPORTED_MEMORY to define wasmMemory externally');
+  assert(typeof Module['INITIAL_MEMORY'] === 'undefined', 'Detected runtime INITIAL_MEMORY setting.  Use -sIMPORTED_MEMORY to define wasmMemory dynamically');
 
   var preInit = Module['preInit'];
   if (preInit) {
-    if (typeof preInit == 'function') Module['preInit'] = preInit = [preInit];
+    if (typeof preInit === 'function') Module['preInit'] = preInit = [preInit];
     // Written as a loop so that preInit functions that themselves add more
     // preInit functions.  Is this actually needed?
     while (preInit.length > 0) {
@@ -5385,6 +5400,7 @@ if (Module['printErr']) err = Module['printErr'];
   'wasiRightsToMuslOFlags',
   'wasiOFlagsToMuslOFlags',
   'safeSetTimeout',
+  'safeClearTimeout',
   'setImmediateWrapped',
   'safeRequestAnimationFrame',
   'clearImmediateWrapped',
@@ -5464,11 +5480,11 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'getHeapMax',
   'growMemory',
   'ENV',
+  'setStackLimits',
   'ERRNO_CODES',
   'strError',
   'DNS',
   'Protocols',
-  'Sockets',
   'timers',
   'warnOnce',
   'readEmAsmArgsArray',
@@ -5511,15 +5527,12 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'initRandomFill',
   'randomFill',
   'emSetImmediate',
-  'emClearImmediate_deps',
   'emClearImmediate',
   'promiseMap',
   'Browser',
   'requestFullscreen',
   'setCanvasSize',
-  'getUserMedia',
   'createContext',
-  'getPreloadedImageData__data',
   'wget',
   'MONTH_DAYS_REGULAR',
   'MONTH_DAYS_LEAP',
@@ -5549,7 +5562,6 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'FS_currentPath',
   'FS_initialized',
   'FS_ignorePermissions',
-  'FS_filesystems',
   'FS_syncFSRequests',
   'FS_lookupPath',
   'FS_getPath',
@@ -5640,7 +5652,6 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'FS_staticInit',
   'FS_init',
   'FS_quit',
-  'FS_findObject',
   'FS_analyzePath',
   'FS_createFile',
   'FS_createDataFile',
@@ -5703,14 +5714,14 @@ function checkIncomingModuleAPI() {
   ignoredModuleProp('wasmBinary');
 }
 var ASM_CONSTS = {
-  2831622: ($0) => { globalThis.picorubyRefs[$0] = null; },  
- 2831662: ($0) => { globalThis.picorubyRefs[$0] = true; },  
- 2831702: ($0) => { globalThis.picorubyRefs[$0] = false; },  
- 2831743: ($0, $1) => { globalThis.picorubyRefs[$0] = $1; },  
- 2831781: ($0, $1) => { globalThis.picorubyRefs[$0] = $1; },  
- 2831819: ($0, $1, $2) => { const str = UTF8ToString($1, $2); globalThis.picorubyRefs[$0] = str; },  
- 2831892: ($0, $1) => { const arr = globalThis.picorubyRefs[$0]; const elem = globalThis.picorubyRefs[$1]; arr.push(elem); delete globalThis.picorubyRefs[$1]; },  
- 2832031: ($0, $1, $2) => { const obj = globalThis.picorubyRefs[$0]; const key = UTF8ToString($1); const val = globalThis.picorubyRefs[$2]; obj[key] = val; delete globalThis.picorubyRefs[$2]; }
+  2871989: ($0) => { globalThis.picorubyRefs[$0] = null; },  
+ 2872029: ($0) => { globalThis.picorubyRefs[$0] = true; },  
+ 2872069: ($0) => { globalThis.picorubyRefs[$0] = false; },  
+ 2872110: ($0, $1) => { globalThis.picorubyRefs[$0] = $1; },  
+ 2872148: ($0, $1) => { globalThis.picorubyRefs[$0] = $1; },  
+ 2872186: ($0, $1, $2) => { const str = UTF8ToString($1, $2); globalThis.picorubyRefs[$0] = str; },  
+ 2872259: ($0, $1) => { const arr = globalThis.picorubyRefs[$0]; const elem = globalThis.picorubyRefs[$1]; arr.push(elem); delete globalThis.picorubyRefs[$1]; },  
+ 2872398: ($0, $1, $2) => { const obj = globalThis.picorubyRefs[$0]; const key = UTF8ToString($1); const val = globalThis.picorubyRefs[$2]; obj[key] = val; delete globalThis.picorubyRefs[$2]; }
 };
 function ble_dataview_length(ref_id) { try { const dv = globalThis.picorubyRefs[ref_id]; if (dv && dv.byteLength !== undefined) { return dv.byteLength; } return 0; } catch(e) { console.error('ble_dataview_length failed:', e); return 0; } }
 function ble_dataview_read(ref_id,out_buf,max_len) { try { const dv = globalThis.picorubyRefs[ref_id]; if (!dv) return 0; const len = Math.min(dv.byteLength, max_len); for (let i = 0; i < len; i++) { HEAPU8[out_buf + i] = dv.getUint8(i); } return len; } catch(e) { console.error('ble_dataview_read failed:', e); return 0; } }
@@ -5766,7 +5777,7 @@ function js_replace_child(parent_ref_id,new_child_ref_id,old_child_ref_id) { try
 function js_insert_before(parent_ref_id,new_child_ref_id,ref_child_ref_id) { try { const parent = globalThis.picorubyRefs[parent_ref_id]; const newChild = globalThis.picorubyRefs[new_child_ref_id]; const refChild = globalThis.picorubyRefs[ref_child_ref_id]; if (!parent || !newChild) return false; parent.insertBefore(newChild, refChild); return true; } catch(e) { console.error('Error in js_insert_before:', e); return false; } }
 function js_set_attribute(ref_id,name,value) { try { const element = globalThis.picorubyRefs[ref_id]; if (!element || !element.setAttribute) return false; element.setAttribute(UTF8ToString(name), UTF8ToString(value)); return true; } catch(e) { console.error('Error in js_set_attribute:', e); return false; } }
 function js_remove_attribute(ref_id,name) { try { const element = globalThis.picorubyRefs[ref_id]; if (!element || !element.removeAttribute) return false; element.removeAttribute(UTF8ToString(name)); return true; } catch(e) { console.error('Error in js_remove_attribute:', e); return false; } }
-function setup_binary_handler(ref_id,mrb_ptr,task_ptr,callback_id) { const response = globalThis.picorubyRefs[ref_id]; if (!response || typeof response.arrayBuffer !== 'function') { console.error('Invalid response object:', response); return 0; } response.arrayBuffer().then(arrayBuffer => { const uint8Array = new Uint8Array(arrayBuffer); const ptr = _malloc(uint8Array.length); const heapBytes = new Uint8Array(HEAPU8.buffer, ptr, uint8Array.length); heapBytes.set(uint8Array); ccall( 'resume_binary_task', 'void', ['number', 'number', 'number', 'number', 'number'], [mrb_ptr, task_ptr, callback_id, ptr, uint8Array.length] ); }).catch(error => { console.error('Error in arrayBuffer processing:', error); }); return 0; }
+function setup_binary_handler(ref_id,mrb_ptr,task_ptr,callback_id) { const object = globalThis.picorubyRefs[ref_id]; const reportError = (error) => { const message = error && typeof error.message === 'string' ? error.message : String(error); const size = lengthBytesUTF8(message) + 1; const errorPtr = _malloc(size); stringToUTF8(message, errorPtr, size); ccall( 'resume_promise_error_task', 'void', ['number', 'number', 'number', 'number'], [mrb_ptr, task_ptr, callback_id, errorPtr] ); }; Promise.resolve().then(() => { if (!object || typeof object.arrayBuffer !== 'function') { throw new TypeError('JS object does not implement arrayBuffer()'); } return object.arrayBuffer(); }).then(arrayBuffer => { const uint8Array = new Uint8Array(arrayBuffer); const ptr = _malloc(uint8Array.length); const heapBytes = new Uint8Array(HEAPU8.buffer, ptr, uint8Array.length); heapBytes.set(uint8Array); ccall( 'resume_binary_task', 'void', ['number', 'number', 'number', 'number', 'number'], [mrb_ptr, task_ptr, callback_id, ptr, uint8Array.length] ); }).catch(reportError); }
 function init_js_type_offsets(type_offset,value_offset,is_integer_offset,string_value_offset) { globalThis.JS_TYPE_INFO_OFFSETS = { type: type_offset, value: value_offset, is_integer: is_integer_offset, string_value: string_value_offset }; }
 function js_get_type_info(ref_id,info) { const value = globalThis.picorubyRefs[ref_id]; const offsets = globalThis.JS_TYPE_INFO_OFFSETS; let type = typeof value; if (value === null) { HEAP32[info + offsets.type >> 2] = 1; HEAP32[info + offsets.string_value >> 2] = 0; } else if (Array.isArray(value)) { HEAP32[info + offsets.type >> 2] = 7; HEAP32[info + offsets.value >> 2] = value.length; HEAP32[info + offsets.string_value >> 2] = 0; } else { switch(type) { case "undefined": HEAP32[info + offsets.type >> 2] = 0; HEAP32[info + offsets.string_value >> 2] = 0; break; case "boolean": HEAP32[info + offsets.type >> 2] = 2; HEAPU8[info + offsets.value] = value ? 1 : 0; HEAP32[info + offsets.string_value >> 2] = 0; break; case "number": HEAP32[info + offsets.type >> 2] = 3; HEAPF64[info + offsets.value >> 3] = value; HEAPU8[info + offsets.is_integer] = Number.isInteger(value) ? 1 : 0; HEAP32[info + offsets.string_value >> 2] = 0; break; case "bigint": case "string": case "symbol": { HEAP32[info + offsets.type >> 2] = type === "bigint" ? 4 : type === "string" ? 5 : 6; const str = type === "symbol" ? (value.description || "") : value.toString(); const length = lengthBytesUTF8(str) + 1; const ptr = _malloc(length); stringToUTF8(str, ptr, length); HEAP32[info + offsets.string_value >> 2] = ptr; break; } case "object": HEAP32[info + offsets.type >> 2] = 8; HEAP32[info + offsets.string_value >> 2] = 0; break; case "function": HEAP32[info + offsets.type >> 2] = 9; HEAP32[info + offsets.string_value >> 2] = 0; break; } } }
 function js_eval(script) { try { var result = (0, eval)(UTF8ToString(script)); if (result === undefined || result === null) return -1; var refId = globalThis.picorubyRefs.length; globalThis.picorubyRefs.push(result); return refId; } catch(e) { console.error('JS.eval error:', e); return -1; } }
@@ -5860,57 +5871,59 @@ var _emscripten_stack_get_end = makeInvalidEarlyAccess('_emscripten_stack_get_en
 var __emscripten_stack_restore = makeInvalidEarlyAccess('__emscripten_stack_restore');
 var __emscripten_stack_alloc = makeInvalidEarlyAccess('__emscripten_stack_alloc');
 var _emscripten_stack_get_current = makeInvalidEarlyAccess('_emscripten_stack_get_current');
+var ___set_stack_limits = Module['___set_stack_limits'] = makeInvalidEarlyAccess('___set_stack_limits');
 var memory = makeInvalidEarlyAccess('memory');
 var __indirect_function_table = makeInvalidEarlyAccess('__indirect_function_table');
 var wasmMemory = makeInvalidEarlyAccess('wasmMemory');
 var wasmTable = makeInvalidEarlyAccess('wasmTable');
 
 function assignWasmExports(wasmExports) {
-  assert(typeof wasmExports['ble_notify_callback'] != 'undefined', 'missing Wasm export: ble_notify_callback');
-  assert(typeof wasmExports['mrb_get_globals_json'] != 'undefined', 'missing Wasm export: mrb_get_globals_json');
-  assert(typeof wasmExports['mrb_get_component_debug_info'] != 'undefined', 'missing Wasm export: mrb_get_component_debug_info');
-  assert(typeof wasmExports['mrb_get_component_state_by_id'] != 'undefined', 'missing Wasm export: mrb_get_component_state_by_id');
-  assert(typeof wasmExports['mrb_eval_string'] != 'undefined', 'missing Wasm export: mrb_eval_string');
-  assert(typeof wasmExports['mrb_debug_get_status'] != 'undefined', 'missing Wasm export: mrb_debug_get_status');
-  assert(typeof wasmExports['mrb_debug_continue'] != 'undefined', 'missing Wasm export: mrb_debug_continue');
-  assert(typeof wasmExports['mrb_debug_get_locals'] != 'undefined', 'missing Wasm export: mrb_debug_get_locals');
-  assert(typeof wasmExports['mrb_debug_eval_in_binding'] != 'undefined', 'missing Wasm export: mrb_debug_eval_in_binding');
-  assert(typeof wasmExports['mrb_debug_step'] != 'undefined', 'missing Wasm export: mrb_debug_step');
-  assert(typeof wasmExports['mrb_debug_next'] != 'undefined', 'missing Wasm export: mrb_debug_next');
-  assert(typeof wasmExports['mrb_debug_get_callstack'] != 'undefined', 'missing Wasm export: mrb_debug_get_callstack');
-  assert(typeof wasmExports['call_ruby_callback'] != 'undefined', 'missing Wasm export: call_ruby_callback');
-  assert(typeof wasmExports['call_ruby_callback_oneshot'] != 'undefined', 'missing Wasm export: call_ruby_callback_oneshot');
-  assert(typeof wasmExports['call_ruby_callback_sync_event'] != 'undefined', 'missing Wasm export: call_ruby_callback_sync_event');
-  assert(typeof wasmExports['resume_promise_task'] != 'undefined', 'missing Wasm export: resume_promise_task');
-  assert(typeof wasmExports['resume_promise_error_task'] != 'undefined', 'missing Wasm export: resume_promise_error_task');
-  assert(typeof wasmExports['resume_binary_task'] != 'undefined', 'missing Wasm export: resume_binary_task');
-  assert(typeof wasmExports['call_ruby_callback_sync_generic'] != 'undefined', 'missing Wasm export: call_ruby_callback_sync_generic');
-  assert(typeof wasmExports['mrb_tick_wasm'] != 'undefined', 'missing Wasm export: mrb_tick_wasm');
-  assert(typeof wasmExports['mrb_run_step'] != 'undefined', 'missing Wasm export: mrb_run_step');
-  assert(typeof wasmExports['mrb_run_step_status'] != 'undefined', 'missing Wasm export: mrb_run_step_status');
-  assert(typeof wasmExports['mrb_gc_scheduler_pending_wasm'] != 'undefined', 'missing Wasm export: mrb_gc_scheduler_pending_wasm');
-  assert(typeof wasmExports['picorb_init'] != 'undefined', 'missing Wasm export: picorb_init');
-  assert(typeof wasmExports['picorb_create_task'] != 'undefined', 'missing Wasm export: picorb_create_task');
-  assert(typeof wasmExports['picorb_create_task_with_filename'] != 'undefined', 'missing Wasm export: picorb_create_task_with_filename');
-  assert(typeof wasmExports['picorb_create_task_from_mrb'] != 'undefined', 'missing Wasm export: picorb_create_task_from_mrb');
-  assert(typeof wasmExports['serial_data_received'] != 'undefined', 'missing Wasm export: serial_data_received');
-  assert(typeof wasmExports['serial_disconnect_callback'] != 'undefined', 'missing Wasm export: serial_disconnect_callback');
-  assert(typeof wasmExports['call_ruby_callback_with_binary_data'] != 'undefined', 'missing Wasm export: call_ruby_callback_with_binary_data');
-  assert(typeof wasmExports['fflush'] != 'undefined', 'missing Wasm export: fflush');
-  assert(typeof wasmExports['strerror'] != 'undefined', 'missing Wasm export: strerror');
-  assert(typeof wasmExports['emscripten_builtin_memalign'] != 'undefined', 'missing Wasm export: emscripten_builtin_memalign');
-  assert(typeof wasmExports['malloc'] != 'undefined', 'missing Wasm export: malloc');
-  assert(typeof wasmExports['free'] != 'undefined', 'missing Wasm export: free');
-  assert(typeof wasmExports['setThrew'] != 'undefined', 'missing Wasm export: setThrew');
-  assert(typeof wasmExports['emscripten_stack_init'] != 'undefined', 'missing Wasm export: emscripten_stack_init');
-  assert(typeof wasmExports['emscripten_stack_get_free'] != 'undefined', 'missing Wasm export: emscripten_stack_get_free');
-  assert(typeof wasmExports['emscripten_stack_get_base'] != 'undefined', 'missing Wasm export: emscripten_stack_get_base');
-  assert(typeof wasmExports['emscripten_stack_get_end'] != 'undefined', 'missing Wasm export: emscripten_stack_get_end');
-  assert(typeof wasmExports['_emscripten_stack_restore'] != 'undefined', 'missing Wasm export: _emscripten_stack_restore');
-  assert(typeof wasmExports['_emscripten_stack_alloc'] != 'undefined', 'missing Wasm export: _emscripten_stack_alloc');
-  assert(typeof wasmExports['emscripten_stack_get_current'] != 'undefined', 'missing Wasm export: emscripten_stack_get_current');
-  assert(typeof wasmExports['memory'] != 'undefined', 'missing Wasm export: memory');
-  assert(typeof wasmExports['__indirect_function_table'] != 'undefined', 'missing Wasm export: __indirect_function_table');
+  assert(typeof wasmExports['ble_notify_callback'] !== 'undefined', 'missing Wasm export: ble_notify_callback');
+  assert(typeof wasmExports['mrb_get_globals_json'] !== 'undefined', 'missing Wasm export: mrb_get_globals_json');
+  assert(typeof wasmExports['mrb_get_component_debug_info'] !== 'undefined', 'missing Wasm export: mrb_get_component_debug_info');
+  assert(typeof wasmExports['mrb_get_component_state_by_id'] !== 'undefined', 'missing Wasm export: mrb_get_component_state_by_id');
+  assert(typeof wasmExports['mrb_eval_string'] !== 'undefined', 'missing Wasm export: mrb_eval_string');
+  assert(typeof wasmExports['mrb_debug_get_status'] !== 'undefined', 'missing Wasm export: mrb_debug_get_status');
+  assert(typeof wasmExports['mrb_debug_continue'] !== 'undefined', 'missing Wasm export: mrb_debug_continue');
+  assert(typeof wasmExports['mrb_debug_get_locals'] !== 'undefined', 'missing Wasm export: mrb_debug_get_locals');
+  assert(typeof wasmExports['mrb_debug_eval_in_binding'] !== 'undefined', 'missing Wasm export: mrb_debug_eval_in_binding');
+  assert(typeof wasmExports['mrb_debug_step'] !== 'undefined', 'missing Wasm export: mrb_debug_step');
+  assert(typeof wasmExports['mrb_debug_next'] !== 'undefined', 'missing Wasm export: mrb_debug_next');
+  assert(typeof wasmExports['mrb_debug_get_callstack'] !== 'undefined', 'missing Wasm export: mrb_debug_get_callstack');
+  assert(typeof wasmExports['call_ruby_callback'] !== 'undefined', 'missing Wasm export: call_ruby_callback');
+  assert(typeof wasmExports['call_ruby_callback_oneshot'] !== 'undefined', 'missing Wasm export: call_ruby_callback_oneshot');
+  assert(typeof wasmExports['call_ruby_callback_sync_event'] !== 'undefined', 'missing Wasm export: call_ruby_callback_sync_event');
+  assert(typeof wasmExports['resume_promise_task'] !== 'undefined', 'missing Wasm export: resume_promise_task');
+  assert(typeof wasmExports['resume_promise_error_task'] !== 'undefined', 'missing Wasm export: resume_promise_error_task');
+  assert(typeof wasmExports['resume_binary_task'] !== 'undefined', 'missing Wasm export: resume_binary_task');
+  assert(typeof wasmExports['call_ruby_callback_sync_generic'] !== 'undefined', 'missing Wasm export: call_ruby_callback_sync_generic');
+  assert(typeof wasmExports['mrb_tick_wasm'] !== 'undefined', 'missing Wasm export: mrb_tick_wasm');
+  assert(typeof wasmExports['mrb_run_step'] !== 'undefined', 'missing Wasm export: mrb_run_step');
+  assert(typeof wasmExports['mrb_run_step_status'] !== 'undefined', 'missing Wasm export: mrb_run_step_status');
+  assert(typeof wasmExports['mrb_gc_scheduler_pending_wasm'] !== 'undefined', 'missing Wasm export: mrb_gc_scheduler_pending_wasm');
+  assert(typeof wasmExports['picorb_init'] !== 'undefined', 'missing Wasm export: picorb_init');
+  assert(typeof wasmExports['picorb_create_task'] !== 'undefined', 'missing Wasm export: picorb_create_task');
+  assert(typeof wasmExports['picorb_create_task_with_filename'] !== 'undefined', 'missing Wasm export: picorb_create_task_with_filename');
+  assert(typeof wasmExports['picorb_create_task_from_mrb'] !== 'undefined', 'missing Wasm export: picorb_create_task_from_mrb');
+  assert(typeof wasmExports['serial_data_received'] !== 'undefined', 'missing Wasm export: serial_data_received');
+  assert(typeof wasmExports['serial_disconnect_callback'] !== 'undefined', 'missing Wasm export: serial_disconnect_callback');
+  assert(typeof wasmExports['call_ruby_callback_with_binary_data'] !== 'undefined', 'missing Wasm export: call_ruby_callback_with_binary_data');
+  assert(typeof wasmExports['fflush'] !== 'undefined', 'missing Wasm export: fflush');
+  assert(typeof wasmExports['strerror'] !== 'undefined', 'missing Wasm export: strerror');
+  assert(typeof wasmExports['emscripten_builtin_memalign'] !== 'undefined', 'missing Wasm export: emscripten_builtin_memalign');
+  assert(typeof wasmExports['malloc'] !== 'undefined', 'missing Wasm export: malloc');
+  assert(typeof wasmExports['free'] !== 'undefined', 'missing Wasm export: free');
+  assert(typeof wasmExports['setThrew'] !== 'undefined', 'missing Wasm export: setThrew');
+  assert(typeof wasmExports['emscripten_stack_init'] !== 'undefined', 'missing Wasm export: emscripten_stack_init');
+  assert(typeof wasmExports['emscripten_stack_get_free'] !== 'undefined', 'missing Wasm export: emscripten_stack_get_free');
+  assert(typeof wasmExports['emscripten_stack_get_base'] !== 'undefined', 'missing Wasm export: emscripten_stack_get_base');
+  assert(typeof wasmExports['emscripten_stack_get_end'] !== 'undefined', 'missing Wasm export: emscripten_stack_get_end');
+  assert(typeof wasmExports['_emscripten_stack_restore'] !== 'undefined', 'missing Wasm export: _emscripten_stack_restore');
+  assert(typeof wasmExports['_emscripten_stack_alloc'] !== 'undefined', 'missing Wasm export: _emscripten_stack_alloc');
+  assert(typeof wasmExports['emscripten_stack_get_current'] !== 'undefined', 'missing Wasm export: emscripten_stack_get_current');
+  assert(typeof wasmExports['__set_stack_limits'] !== 'undefined', 'missing Wasm export: __set_stack_limits');
+  assert(typeof wasmExports['memory'] !== 'undefined', 'missing Wasm export: memory');
+  assert(typeof wasmExports['__indirect_function_table'] !== 'undefined', 'missing Wasm export: __indirect_function_table');
   _ble_notify_callback = Module['_ble_notify_callback'] = createExportWrapper('ble_notify_callback', wasmExports['ble_notify_callback'], 3);
   _mrb_get_globals_json = Module['_mrb_get_globals_json'] = createExportWrapper('mrb_get_globals_json', wasmExports['mrb_get_globals_json'], 0);
   _mrb_get_component_debug_info = Module['_mrb_get_component_debug_info'] = createExportWrapper('mrb_get_component_debug_info', wasmExports['mrb_get_component_debug_info'], 1);
@@ -5954,6 +5967,7 @@ function assignWasmExports(wasmExports) {
   __emscripten_stack_restore = wasmExports['_emscripten_stack_restore'];
   __emscripten_stack_alloc = wasmExports['_emscripten_stack_alloc'];
   _emscripten_stack_get_current = wasmExports['emscripten_stack_get_current'];
+  ___set_stack_limits = Module['___set_stack_limits'] = createExportWrapper('__set_stack_limits', wasmExports['__set_stack_limits'], 2);
   memory = wasmMemory = wasmExports['memory'];
   __indirect_function_table = wasmTable = wasmExports['__indirect_function_table'];
 }
@@ -5963,6 +5977,8 @@ var wasmImports = {
   __assert_fail: ___assert_fail,
   /** @export */
   __call_sighandler: ___call_sighandler,
+  /** @export */
+  __handle_stack_overflow: ___handle_stack_overflow,
   /** @export */
   __syscall_chdir: ___syscall_chdir,
   /** @export */
@@ -6009,6 +6025,8 @@ var wasmImports = {
   __syscall_symlinkat: ___syscall_symlinkat,
   /** @export */
   __syscall_umask: ___syscall_umask,
+  /** @export */
+  __syscall_uname: ___syscall_uname,
   /** @export */
   __syscall_unlinkat: ___syscall_unlinkat,
   /** @export */
@@ -6120,9 +6138,11 @@ var wasmImports = {
   /** @export */
   invoke_ddd,
   /** @export */
-  invoke_ddj,
+  invoke_di,
   /** @export */
   invoke_ii,
+  /** @export */
+  invoke_iid,
   /** @export */
   invoke_iii,
   /** @export */
@@ -6130,17 +6150,11 @@ var wasmImports = {
   /** @export */
   invoke_iiiii,
   /** @export */
+  invoke_iiiiiii,
+  /** @export */
+  invoke_iiiiiiiii,
+  /** @export */
   invoke_iij,
-  /** @export */
-  invoke_iijiiiiii,
-  /** @export */
-  invoke_ijj,
-  /** @export */
-  invoke_ji,
-  /** @export */
-  invoke_jii,
-  /** @export */
-  invoke_jjd,
   /** @export */
   invoke_vi,
   /** @export */
@@ -6152,25 +6166,7 @@ var wasmImports = {
   /** @export */
   invoke_viiiii,
   /** @export */
-  invoke_viiiiiii,
-  /** @export */
-  invoke_viiiij,
-  /** @export */
-  invoke_viiiijii,
-  /** @export */
-  invoke_viiij,
-  /** @export */
-  invoke_viij,
-  /** @export */
-  invoke_viiji,
-  /** @export */
-  invoke_viijiii,
-  /** @export */
-  invoke_viijj,
-  /** @export */
-  invoke_vij,
-  /** @export */
-  invoke_vijii,
+  invoke_viiiiii,
   /** @export */
   js_add_event_listener,
   /** @export */
@@ -6319,21 +6315,10 @@ var wasmImports = {
   ws_set_onopen
 };
 
-function invoke_viii(index,a1,a2,a3) {
+function invoke_iii(index,a1,a2) {
   var sp = stackSave();
   try {
-    getWasmTableEntry(index)(a1,a2,a3);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_vii(index,a1,a2) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1,a2);
+    return getWasmTableEntry(index)(a1,a2);
   } catch(e) {
     stackRestore(sp);
     if (!(e instanceof EmscriptenEH)) throw e;
@@ -6352,15 +6337,14 @@ function invoke_ii(index,a1) {
   }
 }
 
-function invoke_ji(index,a1) {
+function invoke_vii(index,a1,a2) {
   var sp = stackSave();
   try {
-    return getWasmTableEntry(index)(a1);
+    getWasmTableEntry(index)(a1,a2);
   } catch(e) {
     stackRestore(sp);
     if (!(e instanceof EmscriptenEH)) throw e;
     _setThrew(1, 0);
-    return 0n;
   }
 }
 
@@ -6375,32 +6359,10 @@ function invoke_vi(index,a1) {
   }
 }
 
-function invoke_iijiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8) {
+function invoke_iiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8) {
   var sp = stackSave();
   try {
     return getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7,a8);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viijiii(index,a1,a2,a3,a4,a5,a6) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_iii(index,a1,a2) {
-  var sp = stackSave();
-  try {
-    return getWasmTableEntry(index)(a1,a2);
   } catch(e) {
     stackRestore(sp);
     if (!(e instanceof EmscriptenEH)) throw e;
@@ -6419,32 +6381,10 @@ function invoke_viiiii(index,a1,a2,a3,a4,a5) {
   }
 }
 
-function invoke_viiiiiii(index,a1,a2,a3,a4,a5,a6,a7) {
+function invoke_viiiiii(index,a1,a2,a3,a4,a5,a6) {
   var sp = stackSave();
   try {
-    getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiii(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1,a2,a3,a4);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiiijii(index,a1,a2,a3,a4,a5,a6,a7) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6,a7);
+    getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6);
   } catch(e) {
     stackRestore(sp);
     if (!(e instanceof EmscriptenEH)) throw e;
@@ -6463,6 +6403,39 @@ function invoke_iiii(index,a1,a2,a3) {
   }
 }
 
+function invoke_iiiiiii(index,a1,a2,a3,a4,a5,a6) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3,a4,a5,a6);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viii(index,a1,a2,a3) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiii(index,a1,a2,a3,a4) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3,a4);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
 function invoke_iiiii(index,a1,a2,a3,a4) {
   var sp = stackSave();
   try {
@@ -6474,74 +6447,7 @@ function invoke_iiiii(index,a1,a2,a3,a4) {
   }
 }
 
-function invoke_viiiij(index,a1,a2,a3,a4,a5) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1,a2,a3,a4,a5);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_vij(index,a1,a2) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1,a2);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viij(index,a1,a2,a3) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1,a2,a3);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiij(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1,a2,a3,a4);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiji(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1,a2,a3,a4);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_jjd(index,a1,a2) {
-  var sp = stackSave();
-  try {
-    return getWasmTableEntry(index)(a1,a2);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-    return 0n;
-  }
-}
-
-function invoke_ijj(index,a1,a2) {
+function invoke_iid(index,a1,a2) {
   var sp = stackSave();
   try {
     return getWasmTableEntry(index)(a1,a2);
@@ -6552,10 +6458,10 @@ function invoke_ijj(index,a1,a2) {
   }
 }
 
-function invoke_viijj(index,a1,a2,a3,a4) {
+function invoke_di(index,a1) {
   var sp = stackSave();
   try {
-    getWasmTableEntry(index)(a1,a2,a3,a4);
+    return getWasmTableEntry(index)(a1);
   } catch(e) {
     stackRestore(sp);
     if (!(e instanceof EmscriptenEH)) throw e;
@@ -6574,44 +6480,10 @@ function invoke_ddd(index,a1,a2) {
   }
 }
 
-function invoke_ddj(index,a1,a2) {
-  var sp = stackSave();
-  try {
-    return getWasmTableEntry(index)(a1,a2);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
 function invoke_iij(index,a1,a2) {
   var sp = stackSave();
   try {
     return getWasmTableEntry(index)(a1,a2);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_jii(index,a1,a2) {
-  var sp = stackSave();
-  try {
-    return getWasmTableEntry(index)(a1,a2);
-  } catch(e) {
-    stackRestore(sp);
-    if (!(e instanceof EmscriptenEH)) throw e;
-    _setThrew(1, 0);
-    return 0n;
-  }
-}
-
-function invoke_vijii(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    getWasmTableEntry(index)(a1,a2,a3,a4);
   } catch(e) {
     stackRestore(sp);
     if (!(e instanceof EmscriptenEH)) throw e;
@@ -6688,13 +6560,8 @@ function checkUnflushedContent() {
   try { // it doesn't matter if it fails
     _fflush(0);
     // also flush in the JS FS layer
-    for (var name of ['stdout', 'stderr']) {
-      var info = FS.analyzePath('/dev/' + name);
-      if (!info) return;
-      var stream = info.object;
-      var rdev = stream.rdev;
-      var tty = TTY.ttys[rdev];
-      if (tty?.output?.length) {
+    for (var tty of Object.values(TTY.ttys)) {
+      if (tty.output.length) {
         has = true;
       }
     }

@@ -30,6 +30,6 @@ suite('session webview html', () => {
 		assert.ok(nonceMatch, 'module script must include a nonce generated from random bytes');
 		assert.ok(html.includes("script-src 'nonce-"), 'CSP must include nonce-based script-src');
 		assert.ok(html.includes("'wasm-unsafe-eval'"), 'CSP must allow wasm-unsafe-eval');
-		assert.ok(!html.includes("'unsafe-eval'"), 'CSP must not allow unsafe-eval');
+		assert.ok(html.includes("'unsafe-eval'"), 'CSP must allow unsafe-eval for Funicular dynamic JavaScript evaluation');
 	});
 });

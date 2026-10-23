@@ -1,12 +1,35 @@
+# Ignore files and directories for VS Code extension development
 .vscode/**
 .vscode-test/**
-src/**
 .gitignore
 .yarnrc
-vsc-extension-quickstart.md
+**/.vscode-test.*
+
+# Source files
+src/**
 **/tsconfig.json
 **/eslint.config.mjs
+**/*.ts
+
+# PicoRuby artifacts
 **/*.br
 **/*.map
-**/*.ts
-**/.vscode-test.*
+
+# memo and logs
+vsc-extension-quickstart.md
+history_of_development.md
+*-memo.md
+**/*.log
+
+# Ruby development environment artifacts
+.ruby-lsp/**
+
+# Release artifacts
+releases/**
+**/*.vsix
+
+# Sample (not required for extension execution)
+sample/**
+
+# Compiled tests
+out/test/**

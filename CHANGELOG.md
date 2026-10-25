@@ -4,6 +4,16 @@ All notable changes to the PicoRuby WASM extension are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-25
+
+### Fixed
+
+- Allow JavaScript dynamic evaluation (`'unsafe-eval'`) in the debug Webview CSP so `Funicular.start` is no longer blocked by the policy; update the CSP regression assertion accordingly
+
+### Documentation
+
+- Document an Extension Development Host crash observed with Jupyter Notebook Renderers (`ms-toolsai.jupyter-renderers`) enabled, and the workaround of disabling that extension
+
 ## [0.3.0] - 2026-10-20
 
 ### Added

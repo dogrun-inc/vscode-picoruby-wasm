@@ -1,7 +1,7 @@
 ![PicoRuby](https://avatars.githubusercontent.com/u/82246354?s=100&v=4)
 
-![VSCode](https://img.shields.io/badge/VSCode->1.120-blue.svg?style=flat)
-![PicoRuby](https://img.shields.io/badge/PicoRuby-4.0.5-red.svg?style=flat)
+[![VSCode](https://img.shields.io/badge/VSCode->1.120-blue.svg?style=flat)](https://code.visualstudio.com/)
+[![PicoRuby](https://img.shields.io/badge/PicoRuby-4.0.5-red.svg?style=flat)](https://picoruby.org/)
 
 [English](README.md) | [日本語](README-ja.md)
 
@@ -11,7 +11,7 @@ A Visual Studio Code extension for developing and debugging PicoRuby. Bundles Pi
 
 This extension provides syntax highlighting and code completion for PicoRuby, as well as **interactive debugging of PicoRuby code embedded in HTML files, running inside VS Code's Webview**. Projects split across multiple `.rb` files are supported: `require` statements are resolved from the files next to your HTML, and breakpoints and stepping work inside those files.
 
-> **Note**: v0.3.0 adds multi-file (`require`) debugging, Step Into / Step Over, and single-file HTML export. Please report issues you encounter on GitHub.
+> **Note**: v0.3.1 fixes a Webview CSP violation when starting Funicular. Please report issues you encounter on GitHub.
 
 ---
 
@@ -184,9 +184,19 @@ VS Code's standard debug interface works seamlessly:
 
 ---
 
+## Known Issue: Jupyter Notebook Renderers
+
+On Windows, the Extension Development Host has been observed to close within a few seconds of launching this extension with F5 when **Jupyter Notebook Renderers** (`ms-toolsai.jupyter-renderers`) is enabled. The host exits with code 134, sometimes without any Debug Console output. Extension Bisect identified this extension; the underlying cause has not been determined.
+
+To work around this, open the Extensions view, search for `@id:ms-toolsai.jupyter-renderers`, and select **Disable (Workspace)** from its gear menu. Reload VS Code and retry. Notebook output that depends on this renderer may be unavailable while it is disabled.
+
+For extension development, adding `"--disable-extensions"` to the `args` of the **Run Extension** configuration (`"type": "extensionHost"`) in `.vscode/launch.json` also allowed the host to start during testing. This disables other installed extensions in the development host.
+
+---
+
 ## Release Status
 
-* **Current Version**: `v0.3.0` (Includes PicoRuby v4.0.5; adds multi-file `require` debugging, stepping, and HTML export)
+* **Current Version**: `v0.3.1` (Includes PicoRuby v4.0.5; fixes the Webview CSP violation when starting Funicular)
 
 Please report bugs or feature requests on GitHub Issues:
 
@@ -205,4 +215,4 @@ Please report bugs or feature requests on GitHub Issues:
 
 ## License
 
-[MIT License](https://www.google.com/search?q=LICENSE)
+[MIT License](LICENSE)

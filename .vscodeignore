@@ -27,9 +27,13 @@ history_of_development.md
 # Release artifacts
 releases/**
 **/*.vsix
+**/*.vsix.sha256
 
 # Sample (not required for extension execution)
 sample/**
 
 # Compiled tests
 out/test/**
+
+# Stale development build artifacts
+out/**/* copy.js

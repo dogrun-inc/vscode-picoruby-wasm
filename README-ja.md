@@ -1,7 +1,7 @@
 ![PicoRuby](https://avatars.githubusercontent.com/u/82246354?s=100&v=4)
 
-![VSCode](https://img.shields.io/badge/VSCode->1.120-blue.svg?style=flat)
-![PicoRuby](https://img.shields.io/badge/PicoRuby-4.0.5-red.svg?style=flat)
+[![VSCode](https://img.shields.io/badge/VSCode->1.120-blue.svg?style=flat)](https://code.visualstudio.com/)
+[![PicoRuby](https://img.shields.io/badge/PicoRuby-4.0.5-red.svg?style=flat)](https://picoruby.org/)
 
 [English](README.md) | [日本語](README-ja.md)
 
@@ -11,7 +11,7 @@ Visual Studio CodeでPicoRubyを開発・デバッグするための拡張機能
 
 本拡張機能では、PicoRubyコードの構文ハイライトや補完機能に加え、**VS Codeで現在開いているHTMLファイルをWebview上で動かしながら、埋め込まれたPicoRubyコードをインタラクティブにデバッグ実行**できます。複数の `.rb` ファイルに分割したプロジェクトにも対応しており、`require` はHTMLと同じディレクトリ配下のファイルから解決され、それらのファイル内でもブレークポイントとステップ実行が機能します。
 
-> **Note**: v0.3.0 では、複数ファイル（`require`）のデバッグ、Step Into / Step Over、単一HTMLエクスポートが追加されました。不具合を見つけた際は GitHub Issue でお知らせください。
+> **Note**: v0.3.1 では、Funicular 起動時の Webview の CSP 違反を修正しました。不具合を見つけた際は GitHub Issue でお知らせください。
 
 ---
 
@@ -183,9 +183,19 @@ VS Code標準のデバッグインターフェースがそのまま利用でき�
 
 ---
 
+## 既知の問題: Jupyter Notebook Renderers
+
+Windows 環境で **Jupyter Notebook Renderers**（`ms-toolsai.jupyter-renderers`）が有効な場合、本拡張機能を F5 で開発実行すると、Extension Development Host のウィンドウが数秒で閉じる現象を確認しています。終了コードは 134 で、デバッグコンソールに何も出力されない場合があります。拡張機能の二分探索でこの拡張機能が特定されましたが、根本原因は未特定です。
+
+回避するには、拡張機能ビューで `@id:ms-toolsai.jupyter-renderers` を検索し、歯車メニューから **無効にする（ワークスペース）** を選択してください。VS Code を再読み込みしてから実行し直します。無効化中は、このレンダラーに依存する Notebook の出力を表示できない場合があります。
+
+拡張機能の開発時は、`.vscode/launch.json` の **Run Extension** 設定（`"type": "extensionHost"`）の `args` に `"--disable-extensions"` を追加する方法でも起動できることを確認しています。この方法では、開発用ウィンドウ内の他のインストール済み拡張機能も無効になります。
+
+---
+
 ## リリース状況
 
-* **現在のバージョン**: `v0.3.0`（PicoRuby v4.0.5 搭載・複数ファイル `require` デバッグ、ステップ実行、HTMLエクスポートを追加）
+* **現在のバージョン**: `v0.3.1`（PicoRuby v4.0.5 搭載・Funicular 起動時の Webview の CSP 違反を修正）
 
 不具合や機能要望がございましたら、GitHub Issueにてお知らせください。（日本語でOKです）
 
@@ -204,4 +214,4 @@ VS Code標準のデバッグインターフェースがそのまま利用でき�
 
 ## ライセンス
 
-[MIT License](https://www.google.com/search?q=LICENSE)
+[MIT License](LICENSE)

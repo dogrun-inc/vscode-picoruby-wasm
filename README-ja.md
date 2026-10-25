@@ -1,7 +1,7 @@
 ![PicoRuby](https://avatars.githubusercontent.com/u/82246354?s=100&v=4)
 
-![VSCode](https://img.shields.io/badge/VSCode->1.120-blue.svg?style=flat)
-![PicoRuby](https://img.shields.io/badge/PicoRuby-4.0.5-red.svg?style=flat)
+[![VSCode](https://img.shields.io/badge/VSCode->1.120-blue.svg?style=flat)](https://code.visualstudio.com/)
+[![PicoRuby](https://img.shields.io/badge/PicoRuby-4.0.5-red.svg?style=flat)](https://picoruby.org/)
 
 [English](README.md) | [日本語](README-ja.md)
 
@@ -214,4 +214,4 @@ Windows 環境で **Jupyter Notebook Renderers**（`ms-toolsai.jupyter-renderers
 
 ## ライセンス
 
-[MIT License](https://www.google.com/search?q=LICENSE)
+[MIT License](LICENSE)

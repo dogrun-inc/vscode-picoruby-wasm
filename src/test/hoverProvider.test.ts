@@ -14,7 +14,7 @@ suite('PicoRuby hover', () => {
 
 	test('extracts adjacent comments and definition headers', () => {
 		const definitions = extractComments('# カウンターを1増やす\n# @param amount [Integer] 増加量\ndef increment(amount = 1)\nend\n# Detached\n\nclass Counter\nend\n# Module docs\nmodule Helpers\nend');
-		assert.strictEqual(definitions[0].description, 'カウンターを1増やす\n@param amount [Integer] 増加量');
+		assert.strictEqual(definitions[0].description, 'カウンターを1増やす\n\n**Parameters:**\n\n- `amount` (`Integer`) — 増加量');
 		assert.strictEqual(definitions[0].signature, 'def increment(amount = 1)');
 		assert.strictEqual(definitions[1].description, '');
 		assert.strictEqual(definitions[2].name, 'Helpers');
@@ -55,6 +55,25 @@ suite('PicoRuby hover', () => {
 		assert.ok(markdown.value.includes('def increment(amount = 1)'));
 		assert.ok(markdown.value.includes('**Local** docs'));
 		assert.ok(!markdown.isTrusted);
+	});
+
+	test('renders parsed documentation in HTML with a signature separator', async () => {
+		const result = await hover('<script type="text/ruby">\n# == Details\n# @param value [Integer] +value+ to add\n# @example Usage\n#   deposit(1)\ndef deposit(value)\nend\n</script>', 'deposit', 'html');
+		assert.ok(result);
+		const body = (result.contents[0] as vscode.MarkdownString).value;
+		assert.ok(body.includes('\n---\n\n## Details'));
+		assert.ok(body.includes('- `value` (`Integer`) — `value` to add'));
+		assert.ok(body.includes('```ruby\ndeposit(1)\n```'));
+	});
+
+	test('nodoc hides the comment body while retaining the definition signature', async () => {
+		const result = await hover('# :nodoc:\n# Secret documentation\ndef hidden_method\nend', 'hidden_method');
+		assert.ok(result);
+		const body = (result.contents[0] as vscode.MarkdownString).value;
+		assert.ok(body.includes('def hidden_method'));
+		assert.ok(!body.includes('Secret'));
+		assert.ok(!body.includes(':nodoc:'));
+		assert.ok(!body.includes('---'));
 	});
 
 	test('searches VFS files and handles collection errors', async () => {

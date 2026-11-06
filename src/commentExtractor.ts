@@ -1,3 +1,5 @@
+import { parseRubyDoc } from './docParser';
+
 export interface UserDefinition {
 	name: string;
 	signature: string;
@@ -16,7 +18,7 @@ export function extractComments(source: string): UserDefinition[] {
 		}
 		const definition = /^\s*(?:class|module)\s+([A-Z]\w*(?:::[A-Z]\w*)*)|^\s*def\s+((?:(?:self|[A-Z]\w*(?:::[A-Z]\w*)*)\.)?[a-zA-Z_]\w*[!?=]?)/.exec(line);
 		if (definition) {
-			definitions.push({ name: definition[1] ?? definition[2], signature: line.trim(), description: comments.join('\n') });
+			definitions.push({ name: definition[1] ?? definition[2], signature: line.trim(), description: parseRubyDoc(comments.join('\n')) });
 		}
 		comments = [];
 	}

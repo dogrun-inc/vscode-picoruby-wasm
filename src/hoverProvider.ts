@@ -101,7 +101,7 @@ export class PicoRubyHoverProvider implements vscode.HoverProvider {
 	private hover(docs: Documentation, range: vscode.Range): vscode.Hover {
 		const markdown = new vscode.MarkdownString();
 		markdown.appendCodeblock(docs.signature, 'ruby');
-		if (docs.description) { markdown.appendMarkdown('\n' + docs.description); }
+		if (docs.description) { markdown.appendMarkdown('\n---\n\n' + docs.description); }
 		if (docs.example) { markdown.appendCodeblock(docs.example, 'ruby'); }
 		return new vscode.Hover(markdown, range);
 	}

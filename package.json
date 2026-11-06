@@ -30,6 +30,8 @@
   ],
   "activationEvents": [
     "onLanguage:picoruby",
+"onLanguage:ruby",
+    "onLanguage:html",
     "onDebugInitialConfigurations:picoruby-wasm",
     "onDebugResolve:picoruby-wasm",
     "onCommand:picoruby.enable",

@@ -30,6 +30,24 @@ suite('Ruby documentation parser', () => {
 			'**before** [*link*](https://example.com) *after* **+bold+** `+code+` `*literal* _value_`');
 	});
 
+	test('protects code spans with matching backtick runs and converts surrounding text', () => {
+		const spans = [
+			'`+value+ *literal*`',
+			'``use `+value+` here``',
+			'```use ``+value+`` and `*literal*` here```',
+			'``use ```+value+``` here``'
+		];
+		for (const span of spans) {
+			assert.strictEqual(parseRubyDoc(`*before* ${span} +after+`), `**before** ${span} \`after\``);
+		}
+	});
+
+	test('does not close a code span with a different number of backticks', () => {
+		for (const text of ['Text: ``+value+`', 'Text: `+value+``', 'Text: ```+value+``']) {
+			assert.strictEqual(parseRubyDoc(text), text.replace('+value+', '`value`'));
+		}
+	});
+
 	test('distinguishes emphasis boundaries from lists, identifiers and unclosed delimiters', () => {
 		assert.strictEqual(parseRubyDoc('* item *bold*\n(_italic_), *b*!\nname_value a*b* * spaced* _spaced _\n+unclosed *bold*'),
 			'* item **bold**\n(*italic*), **b**!\nname_value a*b* * spaced* _spaced _\n+unclosed **bold**');

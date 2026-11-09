@@ -4,7 +4,9 @@
  */
 function convertRdocInlineMarkup(text: string): string {
 	// 保護対象はコード、リンク、太字の順に判定します。
-	const markdownCode = /`+[^`\n]*`+/y;
+	// 開始の連続したバッククォートを記憶し、同じ個数の並びだけで閉じます。
+	// 前後の境界判定により、長い並びの一部を開始・終了記号と見なしません。
+	const markdownCode = /(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/y;
 	const markdownLink = /\[[^\]]*\]\([^)]*\)/y;
 	const markdownBold = /\*\*[^\n]*?\*\*/y;
 	const protectedPatterns = [markdownCode, markdownLink, markdownBold];

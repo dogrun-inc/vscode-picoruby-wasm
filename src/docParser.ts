@@ -113,6 +113,31 @@ interface DocSections {
 	extras: string[];
 }
 
+/** 空行以外に共通する先頭スペースを、本文の基準位置として取り除きます。 */
+function normalizeCommentIndentation(rawComment: string): string[] {
+	const lines = rawComment.replace(/\r\n?/g, '\n').split('\n');
+	let baseIndent = Infinity;
+	for (const line of lines) {
+		if (line.trim()) {
+			baseIndent = Math.min(baseIndent, /^ */.exec(line)![0].length);
+		}
+	}
+	return lines.map(line => line.trim() ? line.slice(baseIndent) : '');
+}
+
+/** 基準位置より2スペース以上深い本文を読み、コードの内容を変えずに囲みます。 */
+function readIndentedCode(lines: string[], start: number): { markdown: string; end: number } {
+	const code = [lines[start]];
+	let end = start;
+	while (end + 1 < lines.length) {
+		const next = lines[end + 1];
+		if (next.trim() && !next.startsWith('  ')) { break; }
+		code.push(next);
+		end++;
+	}
+	return { markdown: codeBlock(code), end };
+}
+
 /** 説明の一行、またはフェンス付きコードブロックを読み、最後に処理した行を返します。 */
 function appendDescription(lines: string[], start: number, description: string[]): number {
 	const fence = /^\s*(`{3,}|~{3,})/.exec(lines[start]);
@@ -165,14 +190,26 @@ function appendYardTag(kind: string, content: string, sections: DocSections): vo
 
 /**
  * # を除去した Ruby コメントを軽量な YARD / RDoc 規則で Markdown に変換します。
+ * 本文の共通インデントを基準とし、2スペース以上深い本文はコードとして扱います。
+ * YARD タグに続く継続行や @example の内容は、各タグの規則で処理します。
  * @param rawComment 抽出済みコメント本文。改行とコード例のインデントを保持します。
  * @returns 整形した本文。空コメントまたは :nodoc: を含む場合は空文字列。
  */
 export function parseRubyDoc(rawComment: string): string {
 	if (rawComment.includes(':nodoc:')) { return ''; }
-	const lines = rawComment.replace(/\r\n?/g, '\n').split('\n');
+	const lines = normalizeCommentIndentation(rawComment);
 	const sections: DocSections = { description: [], params: [], returns: [], raises: [], extras: [] };
 	for (let i = 0; i < lines.length; i++) {
+		// 先頭が 2 スペース以上の行をコードとして扱います。
+		// コード中の @param などをタグとして解釈しないよう、先に判定します。
+		if (lines[i].trim() && lines[i].startsWith('  ')) {
+			const code = readIndentedCode(lines, i);
+			const lastLine = sections.description.at(-1);
+			if (lastLine?.trim()) { sections.description.push(''); }
+			sections.description.push(code.markdown, '');
+			i = code.end;
+			continue;
+		}
 		const tag = /^\s*@(param|return|raise|example|note|see)\b\s*(.*)$/.exec(lines[i]);
 		if (!tag) {
 			i = appendDescription(lines, i, sections.description);

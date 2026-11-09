@@ -53,6 +53,27 @@ suite('Ruby documentation parser', () => {
 			'* item **bold**\n(*italic*), **b**!\nname_value a*b* * spaced* _spaced _\n+unclosed **bold**');
 	});
 
+	test('protects two- and four-space code blocks including nested indentation', () => {
+		for (const indent of ['  ', '    ']) {
+			const source = ['Example:', '', indent + 'if ready', indent + '  puts "+literal+ *value*"', '', indent + 'end', '', '*After*'].join('\n');
+			assert.strictEqual(parseRubyDoc(source), 'Example:\n\n```ruby\nif ready\n  puts "+literal+ *value*"\n\nend\n```\n\n**After**');
+		}
+	});
+
+	test('measures indentation relative to the common comment margin', () => {
+		assert.strictEqual(parseRubyDoc('  Example:\n\n    puts "+literal+"\n  *After*'),
+			'Example:\n\n```ruby\nputs "+literal+"\n```\n\n**After**');
+	});
+
+	test('protects tag-looking code before parsing YARD tags', () => {
+		const body = parseRubyDoc('Example:\n  @param = "+literal+"\n  @balance = 1\n@param amount [Integer] charge');
+		assert.strictEqual(body, 'Example:\n\n```ruby\n@param = "+literal+"\n@balance = 1\n```\n\n**Parameters:**\n\n- `amount` (`Integer`) — charge');
+	});
+
+	test('keeps one-space indentation as prose', () => {
+		assert.strictEqual(parseRubyDoc('Text\n *bold*'), 'Text\n **bold**');
+	});
+
 	test('supports optional types, repeated raises, notes, references and continuation lines', () => {
 		const body = parseRubyDoc('@param name display name\n  continued\n@return a result\n@raise [Error] failure\n@raise [Other] another\n@note Be *careful*\n@see https://example.com/docs\n@see Wallet#deposit');
 		assert.ok(body.includes('- `name` — display name continued'));

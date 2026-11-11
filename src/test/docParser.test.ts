@@ -90,6 +90,57 @@ suite('Ruby documentation parser', () => {
 		assert.ok(body.includes('- `value` (`String`) — input'));
 	});
 
+	test('keeps instance variables and tag-looking code inside examples', () => {
+		const source = [
+			'@example *Balance*',
+			'  @balance = 1',
+			'  @param = "+literal+"',
+			'  if ready',
+			'    @balance += 1',
+			'',
+			'    puts @balance',
+			'  end',
+			'@param amount [Integer] charge',
+			'@example Next',
+			'  puts "done"'
+		].join('\n');
+		assert.strictEqual(parseRubyDoc(source), [
+			'**Parameters:**\n\n- `amount` (`Integer`) — charge',
+			'**Example:** **Balance**\n\n```ruby\n@balance = 1\n@param = "+literal+"\nif ready\n  @balance += 1\n\n  puts @balance\nend\n```',
+			'**Example:** Next\n\n```ruby\nputs "done"\n```'
+		].join('\n\n'));
+	});
+
+	test('ends an indented example at tags at the same or shallower indentation', () => {
+		const source = [
+			'Description',
+			' @example First',
+			'   @balance = 1',
+			' @example Second',
+			'   @param = 2',
+			'@return [Integer] result'
+		].join('\n');
+		assert.strictEqual(parseRubyDoc(source), [
+			'Description',
+			'**Returns:** `Integer` — result',
+			'**Example:** First\n\n```ruby\n@balance = 1\n```',
+			'**Example:** Second\n\n```ruby\n@param = 2\n```'
+		].join('\n\n'));
+	});
+
+	test('preserves example code relative to a nonzero common comment margin', () => {
+		const source = [
+			'  @example',
+			'    @balance = 1',
+			'    puts @balance',
+			'  @param amount [Integer] charge'
+		].join('\n');
+		assert.strictEqual(parseRubyDoc(source), [
+			'**Parameters:**\n\n- `amount` (`Integer`) — charge',
+			'**Example:**\n\n```ruby\n@balance = 1\nputs @balance\n```'
+		].join('\n\n'));
+	});
+
 	test('preserves fenced Markdown code and handles CRLF and empty input', () => {
 		assert.strictEqual(parseRubyDoc('```ruby\nputs "+literal+"\n```'), '```ruby\nputs "+literal+"\n```');
 		assert.strictEqual(parseRubyDoc('== Title\r\ntext'), '## Title\ntext');

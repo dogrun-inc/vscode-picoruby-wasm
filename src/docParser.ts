@@ -161,7 +161,9 @@ function readExample(lines: string[], start: number, title: string): { markdown:
 	const code: string[] = [];
 	let end = start;
 	while (end + 1 < lines.length && (/^\s+\S/.test(lines[end + 1]) || !lines[end + 1].trim())) {
-		if (/^\s*@\w+/.test(lines[end + 1])) { break; }
+		const nextIndent = /^\s*/.exec(lines[end + 1])![0].length;
+		const tagIndent = /^\s*/.exec(lines[start])![0].length;
+		if (/^\s*@\w+/.test(lines[end + 1]) && nextIndent <= tagIndent) { break; }
 		code.push(lines[++end]);
 	}
 	const heading = '**Example:**' + (title ? ' ' + convertRdocInlineMarkup(title) : '');

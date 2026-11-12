@@ -156,6 +156,64 @@ function appendDescription(lines: string[], start: number, description: string[]
 	return end;
 }
 
+/**
+ * 先頭の角括弧付き型を入れ子も考慮して読み取ります。
+ * @param text 型表記から始まる文字列。
+ * @returns 型の中身と後続文字列。対応する閉じ括弧がない場合は `undefined`。
+ */
+function readBracketedType(text: string): { type: string; rest: string } | undefined {
+	if (text[0] !== '[') {
+		return undefined;
+	}
+	let depth = 0;
+	for (let i = 0; i < text.length; i++) {
+		if (text[i] === '[') {
+			depth++;
+		} else if (text[i] === ']' && --depth === 0) {
+			return { type: text.slice(1, i), rest: text.slice(i + 1) };
+		}
+	}
+	return undefined;
+}
+
+/**
+ * YARD の名前先行・型先行の `@param` 内容を解析します。
+ * @param content パラメーター名、任意の型、説明を含むタグ内容。
+ * @returns 解析した名前・型・説明。名前を読み取れない場合は `undefined`。
+ */
+function parseYardParam(content: string): { name: string; type?: string; description?: string } | undefined {
+	const leadingType = readBracketedType(content);
+	if (leadingType) {
+		const typed = /^\s+(\S+)(?:\s+(.*))?$/.exec(leadingType.rest);
+		if (typed) {
+			return { name: typed[1], type: leadingType.type, description: typed[2] };
+		}
+	}
+
+	const param = /^(\S+)(?:\s+(.*))?$/.exec(content);
+	if (!param) {
+		return undefined;
+	}
+	const trailingType = param[2] === undefined ? undefined : readBracketedType(param[2]);
+	if (!trailingType || (trailingType.rest !== '' && !/^\s/.test(trailingType.rest))) {
+		return { name: param[1], description: param[2] };
+	}
+	return { name: param[1], type: trailingType.type, description: trailingType.rest.trim() || undefined };
+}
+
+/**
+ * `@return` や `@raise` の内容から、先頭の型と説明を解析します。
+ * @param content 任意の型と説明を含むタグ内容。
+ * @returns 解析した型（あれば）と説明。
+ */
+function parseYardTypedDescription(content: string): { type?: string; description: string } {
+	const typed = readBracketedType(content);
+	if (typed) {
+		return { type: typed.type, description: typed.rest.trimStart() };
+	}
+	return { description: content };
+}
+
 /** @example に続くコードを読み、整形結果と最後に処理した行を返します。 */
 function readExample(lines: string[], start: number, title: string): { markdown: string; end: number } {
 	const code: string[] = [];
@@ -173,13 +231,13 @@ function readExample(lines: string[], start: number, title: string): { markdown:
 /** コード例以外の YARD タグを整形し、対応するセクションに追加します。 */
 function appendYardTag(kind: string, content: string, sections: DocSections): void {
 	if (kind === 'param') {
-		const param = /^(\S+)(?:\s+\[([^\]]*)\])?(?:\s+(.*))?$/.exec(content);
+		const param = parseYardParam(content);
 		if (param) {
-			sections.params.push('- `' + param[1] + '`' + (param[2] ? ' (`' + param[2] + '`)' : '') + (param[3] ? ' — ' + convertRdocInlineMarkup(param[3]) : ''));
+			sections.params.push('- `' + param.name + '`' + (param.type ? ' (`' + param.type + '`)' : '') + (param.description ? ' — ' + convertRdocInlineMarkup(param.description) : ''));
 		}
 	} else if (kind === 'return' || kind === 'raise') {
-		const typed = /^(?:\[([^\]]*)\]\s*)?(.*)$/.exec(content)!;
-		const formatted = (typed[1] ? '`' + typed[1] + '`' : '') + (typed[1] && typed[2] ? ' — ' : '') + convertRdocInlineMarkup(typed[2]);
+		const typed = parseYardTypedDescription(content);
+		const formatted = (typed.type ? '`' + typed.type + '`' : '') + (typed.type && typed.description ? ' — ' : '') + convertRdocInlineMarkup(typed.description);
 		if (kind === 'return') { sections.returns.push('**Returns:** ' + formatted); }
 		else { sections.raises.push('- ' + formatted); }
 	} else if (kind === 'note') {

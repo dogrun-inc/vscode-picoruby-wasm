@@ -84,6 +84,11 @@ suite('Ruby documentation parser', () => {
 		assert.ok(body.includes('**See:** `Wallet#deposit`'));
 	});
 
+	test('supports nested bracketed types for parameters, returns and raises', () => {
+		const body = parseRubyDoc('@param [Array[Integer]] values list of values\n@param mapping [Hash[String, Array[Integer]]] nested values\n@param [String] title\n@param name display name\n@return [Array[Hash[String, Integer]]] calculated values\n@raise [ValidationError[ArgumentError]] if invalid');
+		assert.strictEqual(body, '**Parameters:**\n\n- `values` (`Array[Integer]`) — list of values\n- `mapping` (`Hash[String, Array[Integer]]`) — nested values\n- `title` (`String`)\n- `name` — display name\n\n**Returns:** `Array[Hash[String, Integer]]` — calculated values\n\n**Raises:**\n\n- `ValidationError[ArgumentError]` — if invalid');
+	});
+
 	test('preserves example indentation, blank lines and literal decorations', () => {
 		const body = parseRubyDoc('@example\n  if ready\n    puts "+literal+ *value*"\n\n    puts "done"\n  end\n@param value [String] input');
 		assert.ok(body.includes('```ruby\nif ready\n  puts "+literal+ *value*"\n\n  puts "done"\nend\n```'));

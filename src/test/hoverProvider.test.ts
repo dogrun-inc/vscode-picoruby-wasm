@@ -48,6 +48,13 @@ suite('PicoRuby hover', () => {
 		assert.deepStrictEqual(ranges.map(range => text.slice(range.start, range.end)), ['h1']);
 	});
 
+	test('ignores script-looking text in raw-text/RCDATA elements and quoted attributes', () => {
+		const text = '<textarea><script type="text/ruby">puts</script></textarea><style><script type="text/ruby">puts</script></style><div data-template="<script type=\'text/ruby\'>puts</script>">patch</div><script type="text/ruby">h1</script>';
+		const ranges = rubyScriptRanges(text);
+		assert.ok(!ranges.some(range => text.indexOf('puts') >= range.start && text.indexOf('puts') < range.end));
+		assert.deepStrictEqual(ranges.map(range => text.slice(range.start, range.end)), ['h1']);
+	});
+
 	test('local comments precede project definitions and render as Markdown', async () => {
 		const result = await hover('# **Local** docs\ndef increment(amount = 1)\nend', 'increment');
 		assert.ok(result);

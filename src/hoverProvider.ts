@@ -4,23 +4,156 @@ import { extractComments } from './commentExtractor';
 import { BUILTIN_DOCS, Documentation, TAG_DOCS } from './docs/builtins';
 import { collectVfsFiles, VfsMap } from './vfsCollector';
 
+interface HtmlTag {
+	name: string;
+	closing: boolean;
+	start: number;
+	end: number;
+	attributes: string;
+}
+
 /**
- * HTML 内の `type="text/ruby"` を持つ script 要素から、本文の範囲を取得します。
- * HTML コメント内の script 要素は対象に含めません。
+ * 引用符で囲まれた属性値を考慮して、開始位置以降で最初の `>` を探します。
+ * @param html 解析対象のHTML全文。
+ * @param start タグ内容の開始オフセット。
+ * @returns `>` のオフセット。見つからない場合は `-1`。
+ */
+function findTagEnd(html: string, start: number): number {
+	let quote = '';
+	for (let i = start; i < html.length; i++) {
+		const char = html[i];
+		if (quote) {
+			if (char === quote) {
+				quote = '';
+			}
+		} else if (char === '"' || char === "'") {
+			quote = char;
+		} else if (char === '>') {
+			return i;
+		}
+	}
+	return -1;
+}
+
+/**
+ * 指定位置のHTML開始タグまたは終了タグを解析します。
+ * @param html 解析対象のHTML全文。
+ * @param start `<` のオフセット。
+ * @returns タグ名、属性、範囲を含むタグ。位置がタグでないか、閉じ `>` がない場合は `undefined`。
+ */
+function parseHtmlTag(html: string, start: number): HtmlTag | undefined {
+	if (html[start] !== '<') {
+		return undefined;
+	}
+	let cursor = start + 1;
+	const closing = html[cursor] === '/';
+	if (closing) {
+		cursor++;
+	}
+	if (!/[A-Za-z]/.test(html[cursor] ?? '')) {
+		return undefined;
+	}
+	const nameStart = cursor;
+	while (/[A-Za-z0-9:-]/.test(html[cursor] ?? '')) {
+		cursor++;
+	}
+	if (html[cursor] && !/[\t\n\f\r />]/.test(html[cursor])) {
+		return undefined;
+	}
+	const tagEnd = findTagEnd(html, cursor);
+	if (tagEnd < 0) {
+		return undefined;
+	}
+	return {
+		name: html.slice(nameStart, cursor).toLowerCase(),
+		closing,
+		start,
+		end: tagEnd + 1,
+		attributes: closing ? '' : html.slice(cursor, tagEnd)
+	};
+}
+
+/**
+ * 属性名を大文字・小文字を区別せずに検索して値を返します。
+ * @param attributes タグから切り出した属性文字列。
+ * @param name 検索する属性名。
+ * @returns 属性値。属性がない場合や値を持たない場合は空文字列。
+ */
+function getHtmlAttribute(attributes: string, name: string): string {
+	const pattern = /([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
+	for (const match of attributes.matchAll(pattern)) {
+		if (match[1].toLowerCase() === name) {
+			return match[2] ?? match[3] ?? match[4] ?? '';
+		}
+	}
+	return '';
+}
+
+/**
+ * raw-text/RCDATA 要素本文から、対応する終了タグを探します。
+ * @param html 解析対象のHTML全文。
+ * @param name 要素名。
+ * @param start 本文の開始オフセット。
+ * @returns 見つかった終了タグ。存在しない場合は `undefined`。
+ */
+function findRawTextEndTag(html: string, name: string, start: number): HtmlTag | undefined {
+	const endTag = new RegExp(`</${name}(?=[\\t\\n\\f\\r />])`, 'gi');
+	endTag.lastIndex = start;
+	const match = endTag.exec(html);
+	if (!match) {
+		return undefined;
+	}
+	const tag = parseHtmlTag(html, match.index);
+	return tag?.closing ? tag : undefined;
+}
+
+/**
+ * HTML をタグ単位で走査し、Ruby script 本文の範囲を取得します。
+ * コメント、属性値、raw-text/RCDATA 要素内の見かけ上のタグは対象にしません。
  *
  * @param html 解析対象の HTML 全文。
  * @returns 元の文字列に対する開始オフセットと終了オフセット（終了位置は含まない）。
  */
 export function rubyScriptRanges(html: string): { start: number; end: number }[] {
 	const ranges: { start: number; end: number }[] = [];
-	const scripts = /<!--[^]*?-->|<script\b((?:"[^"]*"|'[^']*'|[^'">])*)>([^]*?)(?:<\/script\s*>|$)/gi;
-	for (const match of html.matchAll(scripts)) {
-		if (!match[1]) { continue; }
-		const attributes = /([^\s=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s]+)))?/g;
-		const type = [...match[1].matchAll(attributes)].find(attribute => attribute[1].toLowerCase() === 'type');
-		if ((type?.[2] ?? type?.[3] ?? type?.[4] ?? '').toLowerCase() !== 'text/ruby') { continue; }
-		const start = match.index! + '<script'.length + match[1].length + 1;
-		ranges.push({ start, end: start + match[2].length });
+	const rawTextElements = new Set(['iframe', 'noembed', 'noframes', 'noscript', 'style', 'textarea', 'title', 'xmp']);
+	let position = 0;
+	while (position < html.length) {
+		const start = html.indexOf('<', position);
+		if (start < 0) {
+			break;
+		}
+		if (html.startsWith('<!--', start)) {
+			const commentEnd = html.indexOf('-->', start + 4);
+			position = commentEnd < 0 ? html.length : commentEnd + 3;
+			continue;
+		}
+		if (html.startsWith('<!', start) || html.startsWith('<?', start)) {
+			const declarationEnd = findTagEnd(html, start + 2);
+			position = declarationEnd < 0 ? html.length : declarationEnd + 1;
+			continue;
+		}
+		const tag = parseHtmlTag(html, start);
+		if (!tag) {
+			position = start + 1;
+			continue;
+		}
+		position = tag.end;
+		if (tag.closing) {
+			continue;
+		}
+		if (tag.name === 'plaintext') {
+			break;
+		}
+		if (tag.name !== 'script' && !rawTextElements.has(tag.name)) {
+			continue;
+		}
+
+		const endTag = findRawTextEndTag(html, tag.name, tag.end);
+		if (tag.name === 'script' && getHtmlAttribute(tag.attributes, 'type').toLowerCase() === 'text/ruby') {
+			ranges.push({ start: tag.end, end: endTag?.start ?? html.length });
+		}
+		position = endTag?.end ?? html.length;
 	}
 	return ranges;
 }

@@ -20,3 +20,34 @@ end
 # 内部向けの処理です。
 def internal_update
 end
+
+# ホバーでドキュメントの表示を確認するためのサンプル。
+#
+# == コードと装飾
+# 二重バッククォート内の ``use `+value+` here`` は変更せず、
+# 周囲の *強調* と +code+ は変換する。
+#
+# 2スペースでインデントしたコード:
+#
+#   puts "+literal+ *value*"
+#
+# 4スペースでインデントしたコード:
+#
+#     if ready
+#       puts "+literal+ *value*"
+#     end
+#
+# @param [Array[Integer]] values 型を先に書いた整数の配列
+# @param mapping [Hash[String, Array[Integer]]] 名前を先に書いた入れ子の型
+# @return [Hash[String, Array[Integer]]] 配列を含む結果
+# @example インスタンス変数を含むコード
+#   @balance = 1
+#   @param = "+literal+ *value*"
+#   if ready
+#     puts @balance
+#   end
+# @example 別のコード例
+#   puts "done"
+def review_sample(values, mapping)
+  { "values" => values }
+end

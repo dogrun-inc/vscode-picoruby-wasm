@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { extractComments } from './commentExtractor';
 import { BUILTIN_DOCS, Documentation, TAG_DOCS } from './docs/builtins';
 import { collectVfsFiles, VfsMap } from './vfsCollector';
+import { HoverDefinitionIndex } from './hoverDefinitionIndex';
 
 interface HtmlTag {
 	name: string;
@@ -162,7 +163,8 @@ export function rubyScriptRanges(html: string): { start: number; end: number }[]
  * Ruby コードの組み込み API 仕様や、ユーザー定義のヘッダーとコメントを表示します。
  * HTML ドキュメントでは Ruby の script 本文内だけを対象にします。
  */
-export class PicoRubyHoverProvider implements vscode.HoverProvider {
+export class PicoRubyHoverProvider implements vscode.HoverProvider, vscode.Disposable {
+	private readonly indexes = new Map<string, HoverDefinitionIndex>();
 	/**
 	 * @param collect 対象ファイルと同じディレクトリ配下の Ruby ソースを収集する関数。
 	 * テスト時には任意の VFS 収集関数に差し替えられます。
@@ -207,20 +209,30 @@ export class PicoRubyHoverProvider implements vscode.HoverProvider {
 		const find = (texts: string[]) => texts.flatMap(extractComments).find(definition => definition.name === word || definition.name.split(/::|\./).pop() === word);
 		let definition = find(sources);
 		if (!definition && document.uri.scheme === 'file') {
+			const root = path.dirname(document.uri.fsPath);
+			let index = this.indexes.get(root);
 			try {
-				const files = await this.collect(document.uri.fsPath);
-				if (token.isCancellationRequested) { return null; }
-				const root = path.dirname(document.uri.fsPath);
-				const projectSources = Object.entries(files).filter(([file]) => path.resolve(root, file) !== document.uri.fsPath).map(([file, source]) => {
-					const open = vscode.workspace.textDocuments.find(doc => doc.uri.fsPath === path.resolve(root, file));
-					return open?.getText() ?? source;
-				});
-				definition = find(projectSources);
-			} catch {
-				// Missing or unreadable project files must not break editor hovers.
+				if (!index) {
+					index = new HoverDefinitionIndex(document.uri.fsPath, this.collect);
+					this.indexes.set(root, index);
+				}
+				definition = await index.find(word, document.uri.fsPath, token);
+			} catch (error) {
+				if (!token.isCancellationRequested) {
+					console.error('Failed to index Ruby documentation:', error);
+					if (index && this.indexes.get(root) === index) {
+						index.dispose();
+						this.indexes.delete(root);
+					}
+				}
 			}
 		}
 		return definition && !token.isCancellationRequested ? this.hover(definition, range) : null;
+	}
+
+	dispose(): void {
+		for (const index of this.indexes.values()) { index.dispose(); }
+		this.indexes.clear();
 	}
 
 	/**

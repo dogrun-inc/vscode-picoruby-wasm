@@ -12,6 +12,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const hoverProvider = new PicoRubyHoverProvider();
 
 	context.subscriptions.push(
+		hoverProvider,
 		vscode.languages.registerHoverProvider({ language: 'ruby' }, hoverProvider),
 		vscode.languages.registerHoverProvider({ language: 'html' }, hoverProvider),
 		vscode.languages.registerHoverProvider({ language: 'picoruby' }, hoverProvider),

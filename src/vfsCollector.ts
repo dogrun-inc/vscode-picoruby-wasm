@@ -16,31 +16,36 @@ export interface VfsMap {
  * Filesystem errors are intentionally propagated to the caller.
  *
  * @param targetHtmlPath Absolute or relative path to the HTML entrypoint.
+ * @param signal Optional cancellation signal for traversal and file reads.
  * @returns Promise resolving to the collected relative-path/source map.
  */
-export async function collectVfsFiles(targetHtmlPath: string): Promise<VfsMap> {
+export async function collectVfsFiles(targetHtmlPath: string, signal?: AbortSignal): Promise<VfsMap> {
+	signal?.throwIfAborted();
 	const rootDirectory = path.dirname(targetHtmlPath);
 	const rootStat = await stat(rootDirectory);
+	signal?.throwIfAborted();
 	if (!rootStat.isDirectory()) {
 		return {};
 	}
 
 	const files: VfsMap = {};
-	await collectRubyFiles(rootDirectory, rootDirectory, files);
+	await collectRubyFiles(rootDirectory, rootDirectory, files, signal);
 	return files;
 }
 
 /**
  * Traverses one directory and appends Ruby files to the shared result map.
  */
-async function collectRubyFiles(rootDirectory: string, currentDirectory: string, files: VfsMap): Promise<void> {
+async function collectRubyFiles(rootDirectory: string, currentDirectory: string, files: VfsMap, signal?: AbortSignal): Promise<void> {
+	signal?.throwIfAborted();
 	const entries = await readdir(currentDirectory, { withFileTypes: true });
 
 	for (const entry of entries) {
+		signal?.throwIfAborted();
 		const entryPath = path.join(currentDirectory, entry.name);
 
 		if (entry.isDirectory()) {
-			await collectRubyFiles(rootDirectory, entryPath, files);
+			await collectRubyFiles(rootDirectory, entryPath, files, signal);
 			continue;
 		}
 
@@ -49,6 +54,6 @@ async function collectRubyFiles(rootDirectory: string, currentDirectory: string,
 		}
 
 		const relativePath = path.relative(rootDirectory, entryPath).split(path.sep).join('/');
-		files[relativePath] = await readFile(entryPath, 'utf8');
+		files[relativePath] = await readFile(entryPath, { encoding: 'utf8', signal });
 	}
 }

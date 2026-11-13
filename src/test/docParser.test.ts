@@ -20,6 +20,25 @@ suite('Ruby documentation parser', () => {
 		assert.strictEqual(internal.description, '');
 	});
 
+	test('formats the review sample with protected code and nested YARD types', () => {
+		const sample = readFileSync(path.resolve(__dirname, '../../sample/doc_sample.rb'), 'utf8');
+		const review = extractComments(sample).find(definition => definition.name === 'review_sample');
+		assert.ok(review);
+		for (const expected of [
+			'``use `+value+` here``',
+			'**強調** と `code`',
+			'```ruby\nputs "+literal+ *value*"\n```',
+			'```ruby\nif ready\n  puts "+literal+ *value*"\nend\n```',
+			'- `values` (`Array[Integer]`) — 型を先に書いた整数の配列',
+			'- `mapping` (`Hash[String, Array[Integer]]`) — 名前を先に書いた入れ子の型',
+			'**Returns:** `Hash[String, Array[Integer]]` — 配列を含む結果',
+			'**Example:** インスタンス変数を含むコード\n\n```ruby\n@balance = 1\n@param = "+literal+ *value*"\nif ready\n  puts @balance\nend\n```',
+			'**Example:** 別のコード例\n\n```ruby\nputs "done"\n```'
+		]) {
+			assert.ok(review.description.includes(expected), expected);
+		}
+	});
+
 	test('converts RDoc decoration without changing Markdown or identifiers', () => {
 		assert.strictEqual(parseRubyDoc('=== Heading\n*bold* _italic_ +some_code+\n* item\n- other\nsnake_case **Markdown** `*literal*`'),
 			'### Heading\n**bold** *italic* `some_code`\n* item\n- other\nsnake_case **Markdown** `*literal*`');

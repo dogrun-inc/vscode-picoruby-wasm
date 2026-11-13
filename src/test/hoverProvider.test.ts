@@ -1,4 +1,6 @@
 import * as assert from 'assert';
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { extractComments } from '../commentExtractor';
 import { PicoRubyHoverProvider, rubyScriptRanges } from '../hoverProvider';
@@ -53,6 +55,15 @@ suite('PicoRuby hover', () => {
 		const ranges = rubyScriptRanges(text);
 		assert.ok(!ranges.some(range => text.indexOf('puts') >= range.start && text.indexOf('puts') < range.end));
 		assert.deepStrictEqual(ranges.map(range => text.slice(range.start, range.end)), ['h1']);
+	});
+
+	test('limits the HTML sample to the actual Ruby script', () => {
+		const text = readFileSync(path.resolve(__dirname, '../../sample/picoruby_injection.html'), 'utf8');
+		const bodies = rubyScriptRanges(text).map(range => text.slice(range.start, range.end));
+		assert.strictEqual(bodies.length, 1);
+		assert.ok(bodies[0].includes('puts "hello from picoruby in html"'));
+		assert.ok(!bodies[0].includes('puts "textarea"'));
+		assert.ok(!bodies[0].includes('puts "attribute"'));
 	});
 
 	test('local comments precede project definitions and render as Markdown', async () => {

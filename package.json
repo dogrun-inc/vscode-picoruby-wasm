@@ -30,12 +30,15 @@
   ],
   "activationEvents": [
     "onLanguage:picoruby",
+"onLanguage:ruby",
+    "onLanguage:html",
     "onDebugInitialConfigurations:picoruby-wasm",
     "onDebugResolve:picoruby-wasm",
     "onCommand:picoruby.enable",
     "onCommand:picoruby.disable"
   ],
   "main": "./out/extension.js",
+  "l10n": "./l10n",
   "contributes": {
     "languages": [
       {

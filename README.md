@@ -27,6 +27,9 @@ This extension provides syntax highlighting and code completion for PicoRuby, as
 - **Built-in Constants**: `TRUE`, `FALSE`, `NIL`, etc.
 - **Context-Aware Completion**: Supports `::` and `.` access patterns.
 - **Snippets**: Completion templates for common structures like `def` and `class`.
+- **Hover documentation**: Built-in descriptions are shown in Japanese when VS Code's display language is Japanese, and in English otherwise. User-written comments remain unchanged.
+
+> **Hover performance**: Searching for definitions in other files creates a cached index and recursive file watcher for the current file's directory. These remain until the extension is deactivated, even after the file is closed. Browsing many directories or large directory trees can increase memory and file-watching resource use. Reload the VS Code window to release them.
 
 ### 3. PicoRuby WASM Debugger (Powered by PicoRuby v4.0.5)
 Renders the currently open HTML file in VS Code's Webview panel while executing and debugging the embedded PicoRuby code in real time.

@@ -1,0 +1,17 @@
+{
+  "Outputs values as strings, followed by a newline.": "値を文字列として、末尾に改行を付けて出力します。",
+  "Outputs the inspect representation of values for debugging. In Funicular render methods, also used as the p tag helper.": "値の inspect 表現を出力します。デバッグ時の値の確認に使います。Funicular の render 内では p タグヘルパーとしても使います。",
+  "Outputs values as strings without adding a newline.": "値を文字列として出力します。末尾に改行を追加しません。",
+  "Loads the specified library or Ruby file.": "指定したライブラリや Ruby ファイルを読み込みます。",
+  "Accesses the JavaScript global object.": "JavaScript のグローバルオブジェクトにアクセスします。",
+  "Evaluates JavaScript code passed as a string.": "文字列で渡した JavaScript コードを評価します。",
+  "Base class for Funicular components with state and a UI.": "状態と UI を持つ Funicular コンポーネントの基底クラスです。",
+  "Returns the initial state of a component as a Hash.": "コンポーネントの初期状態を Hash として返すメソッドです。",
+  "Accesses the current state Hash of a component.": "コンポーネントの現在の状態 Hash を参照します。",
+  "Updates the state and triggers a component re-render.": "状態を更新し、コンポーネントの再描画を促します。",
+  "Defines a component UI using tag helpers.": "タグヘルパーを使ってコンポーネントの UI を定義するメソッドです。",
+  "Mounts a component in the specified DOM container.": "コンポーネントを指定した DOM コンテナーにマウントします。",
+  "Opens a SQLite3 database. Use \":memory:\" for an in-memory database or specify a path for a file.": "SQLite3 のデータベースを開きます。メモリ上に作成する場合は \":memory:\"、ファイルを使う場合はパスを指定します。",
+  "Executes an SQL statement and returns the results as an array of rows. Specify placeholder values as an array.": "SQL 文を実行し、問い合わせ結果を行の配列として取得します。プレースホルダーに渡す値は配列で指定します。",
+  "Defines an HTML {0} element in a Funicular render method. Specify attributes as keyword arguments.": "Funicular の render 内で HTML の {0} 要素を定義するタグヘルパーです。属性をキーワード引数で指定します。"
+}

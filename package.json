@@ -38,6 +38,7 @@
     "onCommand:picoruby.disable"
   ],
   "main": "./out/extension.js",
+  "l10n": "./l10n",
   "contributes": {
     "languages": [
       {

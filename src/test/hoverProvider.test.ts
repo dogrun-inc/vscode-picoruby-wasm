@@ -3,10 +3,21 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { extractComments } from '../commentExtractor';
-import { PicoRubyHoverProvider, rubyScriptRanges } from '../hoverProvider';
 
 suite('PicoRuby hover', () => {
 	const token = new vscode.CancellationTokenSource();
+	let BUILTIN_DOCS: typeof import('../docs/builtins').BUILTIN_DOCS;
+	let TAG_DOCS: typeof import('../docs/builtins').TAG_DOCS;
+	let PicoRubyHoverProvider: typeof import('../hoverProvider').PicoRubyHoverProvider;
+	let rubyScriptRanges: typeof import('../hoverProvider').rubyScriptRanges;
+
+	suiteSetup(async () => {
+		const extension = vscode.extensions.getExtension('dogrun-inc.picoruby-wasm');
+		assert.ok(extension);
+		await extension.activate();
+		({ BUILTIN_DOCS, TAG_DOCS } = await import('../docs/builtins.js'));
+		({ PicoRubyHoverProvider, rubyScriptRanges } = await import('../hoverProvider.js'));
+	});
 	suiteTeardown(() => token.dispose());
 
 	async function hover(text: string, word: string, language = 'ruby', provider = new PicoRubyHoverProvider(async () => ({}))) {
@@ -40,6 +51,35 @@ suite('PicoRuby hover', () => {
 		for (const word of ['patch', 'h1', 'execute', 'puts']) {
 			assert.ok(await hover(word, word, 'picoruby'));
 		}
+	});
+
+	test('localizes built-in and tag descriptions using the VS Code display language', async () => {
+		const japanese = vscode.env.language.toLowerCase().split('-')[0] === 'ja';
+		const putsDescription = japanese
+			? '値を文字列として、末尾に改行を付けて出力します。'
+			: 'Outputs values as strings, followed by a newline.';
+		const tagDescription = japanese
+			? 'Funicular の render 内で HTML の h1 要素を定義するタグヘルパーです。属性をキーワード引数で指定します。'
+			: 'Defines an HTML h1 element in a Funicular render method. Specify attributes as keyword arguments.';
+		assert.strictEqual(BUILTIN_DOCS.puts.description, putsDescription);
+		assert.strictEqual(TAG_DOCS.h1.description, tagDescription);
+		for (const docs of [...Object.values(BUILTIN_DOCS), ...Object.values(TAG_DOCS)]) {
+			assert.strictEqual(/[\u3040-\u30ff\u3400-\u9fff]/.test(docs.description), japanese, docs.description);
+		}
+		const putsHover = await hover('puts', 'puts');
+		const tagHover = await hover('h1', 'h1');
+		assert.ok(putsHover);
+		assert.ok(tagHover);
+		assert.ok((putsHover.contents[0] as vscode.MarkdownString).value.includes(putsDescription));
+		assert.ok((tagHover.contents[0] as vscode.MarkdownString).value.includes(tagDescription));
+
+		const document = await vscode.workspace.openTextDocument({ content: 'puts', language: 'ruby' });
+		const registeredHovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+			'vscode.executeHoverProvider', document.uri, new vscode.Position(0, 1)
+		);
+		assert.ok(registeredHovers?.some(result => result.contents.some(content =>
+			typeof content !== 'string' && content.value.includes(putsDescription)
+		)));
 	});
 
 	test('HTML hover is limited to Ruby script bodies', async () => {

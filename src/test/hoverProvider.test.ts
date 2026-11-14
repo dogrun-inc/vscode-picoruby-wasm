@@ -90,6 +90,36 @@ suite('PicoRuby hover', () => {
 		assert.deepStrictEqual(ranges.map(range => text.slice(range.start, range.end)), ['h1']);
 	});
 
+	test('supports text/picoruby script bodies and definitions across Ruby scripts', async () => {
+		const text = '<script type="text/ruby">increment(1)</script><SCRIPT TYPE="TEXT/PICORUBY">\n# Project docs\ndef increment(amount)\nend\nputs amount\n</SCRIPT>';
+		const ranges = rubyScriptRanges(text);
+		assert.deepStrictEqual(ranges.map(range => text.slice(range.start, range.end)), [
+			'increment(1)', '\n# Project docs\ndef increment(amount)\nend\nputs amount\n'
+		]);
+		const definition = await hover(text, 'increment', 'html');
+		assert.ok(definition);
+		assert.ok((definition.contents[0] as vscode.MarkdownString).value.includes('Project docs'));
+		assert.ok(await hover(text, 'puts', 'html'));
+
+		const document = await vscode.workspace.openTextDocument({ content: text, language: 'html' });
+		const registeredHovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+			'vscode.executeHoverProvider', document.uri, document.positionAt(text.indexOf('puts') + 1)
+		);
+		assert.ok(registeredHovers?.some(result => result.contents.some(content =>
+			typeof content !== 'string' && content.value.includes('puts(*objects)')
+		)));
+	});
+
+	test('ignores text/picoruby outside actual script type attributes', async () => {
+		const text = '<!-- <script type="text/picoruby">puts</script> --><textarea><script type="text/picoruby">puts</script></textarea><script data-type="text/picoruby">puts</script><script type="text/picoruby-extra">puts</script>';
+		assert.deepStrictEqual(rubyScriptRanges(text), []);
+		const document = await vscode.workspace.openTextDocument({ content: text, language: 'html' });
+		const provider = new PicoRubyHoverProvider(async () => ({}));
+		for (const match of text.matchAll(/puts/g)) {
+			assert.strictEqual(await provider.provideHover(document, document.positionAt(match.index! + 1), token.token), null);
+		}
+	});
+
 	test('ignores script-looking text in raw-text/RCDATA elements and quoted attributes', () => {
 		const text = '<textarea><script type="text/ruby">puts</script></textarea><style><script type="text/ruby">puts</script></style><div data-template="<script type=\'text/ruby\'>puts</script>">patch</div><script type="text/ruby">h1</script>';
 		const ranges = rubyScriptRanges(text);

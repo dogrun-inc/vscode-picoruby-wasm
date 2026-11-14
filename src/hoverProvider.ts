@@ -151,8 +151,11 @@ export function rubyScriptRanges(html: string): { start: number; end: number }[]
 		}
 
 		const endTag = findRawTextEndTag(html, tag.name, tag.end);
-		if (tag.name === 'script' && getHtmlAttribute(tag.attributes, 'type').toLowerCase() === 'text/ruby') {
-			ranges.push({ start: tag.end, end: endTag?.start ?? html.length });
+		if (tag.name === 'script') {
+			const type = getHtmlAttribute(tag.attributes, 'type').toLowerCase();
+			if (type === 'text/ruby' || type === 'text/picoruby') {
+				ranges.push({ start: tag.end, end: endTag?.start ?? html.length });
+			}
 		}
 		position = endTag?.end ?? html.length;
 	}

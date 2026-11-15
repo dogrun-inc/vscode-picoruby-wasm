@@ -4,6 +4,15 @@ All notable changes to the PicoRuby WASM extension are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - Unreleased
+
+### Added
+
+- Hover documentation for selected built-in APIs and user-defined methods, classes, and modules in Ruby / PicoRuby files and HTML `text/ruby` and `text/picoruby` script bodies
+- Support for basic RDoc formatting and selected YARD tags in documentation comments
+- Lookup of definitions in the current file and `.rb` files under its directory, with cached indexing and support for unsaved editor content
+- Japanese and English built-in hover descriptions based on VS Code's display language
+
 ## [0.3.1] - 2026-10-25
 
 ### Fixed

@@ -1,5 +1,6 @@
 import * as assert from 'assert';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { extractComments } from '../commentExtractor';
@@ -127,13 +128,38 @@ suite('PicoRuby hover', () => {
 		assert.deepStrictEqual(ranges.map(range => text.slice(range.start, range.end)), ['h1']);
 	});
 
-	test('limits the HTML sample to the actual Ruby script', () => {
-		const text = readFileSync(path.resolve(__dirname, '../../sample/picoruby_injection.html'), 'utf8');
+	test('limits an HTML document to the actual Ruby script', () => {
+		const text = [
+			'<textarea rows="2" cols="60"><script type="text/ruby">puts "textarea"</script></textarea>',
+			'<div data-example=\'<script type="text/ruby">puts "attribute"</script>\'>attribute</div>',
+			'<script type="text/ruby">\nclass App\n  def call\n    puts "hello from picoruby in html"\n  end\nend\n</script>',
+			'<script>\nconsole.log("normal js block");\n</script>'
+		].join('\n');
 		const bodies = rubyScriptRanges(text).map(range => text.slice(range.start, range.end));
 		assert.strictEqual(bodies.length, 1);
 		assert.ok(bodies[0].includes('puts "hello from picoruby in html"'));
 		assert.ok(!bodies[0].includes('puts "textarea"'));
 		assert.ok(!bodies[0].includes('puts "attribute"'));
+	});
+
+	test('finds documentation defined in sibling files of the hovered document', async () => {
+		const directory = mkdtempSync(path.join(os.tmpdir(), 'picoruby-hover-'));
+		writeFileSync(path.join(directory, 'docs.rb'), '# Charges the wallet\ndef deposit(amount)\nend\n\n# Reviews values\ndef review_sample(values)\nend\n');
+		writeFileSync(path.join(directory, 'main.rb'), 'deposit(100)\nreview_sample([])\n');
+		const document = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(directory, 'main.rb')));
+		const provider = new PicoRubyHoverProvider();
+		try {
+			for (const word of ['deposit', 'review_sample']) {
+				const result = await provider.provideHover(
+					document, document.positionAt(document.getText().indexOf(word) + 1), token.token
+				);
+				assert.ok(result);
+				assert.ok((result.contents[0] as vscode.MarkdownString).value.includes(`def ${word}`));
+			}
+		} finally {
+			provider.dispose();
+			rmSync(directory, { recursive: true, force: true });
+		}
 	});
 
 	test('local comments precede project definitions and render as Markdown', async () => {

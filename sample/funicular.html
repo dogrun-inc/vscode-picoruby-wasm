@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>PicoRuby Funicular sample</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    button { font-size: 1.2rem; padding: 8px 16px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script type="text/ruby">
+    require 'js'
+    require 'funicular'
+
+    class Counter < Funicular::Component
+      def initialize_state
+        { count: 0 }
+      end
+
+      def increment(_event)
+        patch(count: state[:count] + 1)
+      end
+
+      def render
+        div do
+          h1 { "Count: #{state[:count]}" }
+          button(onclick: :increment) { "+1" }
+        end
+      end
+    end
+
+    Funicular.start(Counter, container: 'app')
+  </script>
+</body>
+</html>

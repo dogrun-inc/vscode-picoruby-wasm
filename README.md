@@ -177,6 +177,20 @@ You can also reference a file directly from the HTML: `<script type="text/ruby" 
 
 Open the Command Palette with the target HTML active and run `PicoRuby: Export Single HTML` or `PicoRuby: Export MRB HTML`. The result is written to a `dist/` folder next to the source HTML.
 
+### Try the Samples
+
+Open [`sample/`](sample/) as a workspace and run `PicoRuby: Enable` to try completion in `.rb` files. To debug a sample, make its HTML file active and press F5. Set breakpoints before starting the debug session.
+
+| What to check | Sample and steps |
+|---|---|
+| `.rb` syntax highlighting, completion, and hover documentation | Open [`editor/picoruby.rb`](sample/editor/picoruby.rb), try completing `puts` or the `def` / `class` snippets, and hover over the `deposit` and `review_sample` calls to see their documentation comments |
+| Ruby and hover in HTML | Compare `puts` inside the Ruby script with occurrences in the `textarea` and attribute value in [`editor/picoruby_injection.html`](sample/editor/picoruby_injection.html) |
+| Official picoruby.wasm demo | Debug [`index.html`](sample/index.html) (the L-Chika sample from the [`@picoruby/wasm-wasi`](https://www.npmjs.com/package/@picoruby/wasm-wasi) page) and use the button in the Webview to blink the LEDs |
+| Breakpoints, stepping, and external scripts | Debug [`debug/index.html`](sample/debug/index.html), stop in [`debug/main.rb`](sample/debug/main.rb) loaded via `src`, and inspect variables and the Debug Console |
+| Multi-file `require` | Debug [`vfs-require/index.html`](sample/vfs-require/index.html); test the Webview button and breakpoints in the `.rb` files |
+| SQLite | Debug [`sqlite.html`](sample/sqlite.html) and check the query results in the Debug Console |
+| Funicular | Debug [`funicular.html`](sample/funicular.html) and increment the counter using the Webview button |
+
 ---
 
 ## Debugger Controls

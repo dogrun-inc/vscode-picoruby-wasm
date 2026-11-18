@@ -176,6 +176,20 @@ project/
 
 対象のHTMLをアクティブにした状態でコマンドパレットから `PicoRuby: Export Single HTML` または `PicoRuby: Export MRB HTML` を実行します。結果は元のHTMLと同じ場所の `dist/` フォルダに出力されます。
 
+### サンプルで動作を確認する
+
+[`sample/`](sample/) をワークスペースとして開き、`.rb` ファイルで補完を試す場合は `PicoRuby: Enable` を実行します。デバッグする場合は、表のHTMLファイルをアクティブにして F5 を押します。ブレークポイントはデバッグ開始前に設定してください。
+
+| 確認内容 | サンプルと操作 |
+|---|---|
+| `.rb` ファイルの構文ハイライト・補完・ホバー | [`editor/picoruby.rb`](sample/editor/picoruby.rb) を開き、`puts` などの入力や `def` / `class` のスニペットを試し、`deposit` と `review_sample` の呼び出しにホバーしてドキュメントコメントを確認する |
+| HTML内のRubyとホバー | [`editor/picoruby_injection.html`](sample/editor/picoruby_injection.html) のRubyスクリプト内と、`textarea` や属性値内の `puts` を比較する |
+| picoruby.wasm 公式デモ | [`index.html`](sample/index.html)（[`@picoruby/wasm-wasi`](https://www.npmjs.com/package/@picoruby/wasm-wasi) のページにあるLチカのサンプル）をデバッグし、WebviewのボタンでLEDを点滅させる |
+| ブレークポイント・ステップ実行・外部スクリプト | [`debug/index.html`](sample/debug/index.html) をデバッグし、`src` で読み込まれる [`debug/main.rb`](sample/debug/main.rb) で停止して変数とデバッグコンソールを確認する |
+| 複数ファイルの `require` | [`vfs-require/index.html`](sample/vfs-require/index.html) をデバッグし、Webviewのボタンと `.rb` ファイル内のブレークポイントを確認する |
+| SQLite | [`sqlite.html`](sample/sqlite.html) をデバッグし、クエリ結果をデバッグコンソールで確認する |
+| Funicular | [`funicular.html`](sample/funicular.html) をデバッグし、Webviewのボタンでカウンターを増やす |
+
 ---
 
 ## デバッガーの操作方法

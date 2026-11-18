@@ -1,3 +1,9 @@
+# Editor sample: syntax highlighting, completion, and hover documentation.
+#
+# - Type `puts` or `def` / `class` to try completion and snippets.
+# - Hover over `deposit` and `review_sample` in the calls at the bottom of
+#   this file to see the documentation comments rendered as Markdown.
+
 # ユーザーのウォレット残高を更新し、UIへ反映する。
 #
 # == 注意事項
@@ -51,3 +57,24 @@ end
 def review_sample(values, mapping)
   { "values" => values }
 end
+
+class LedBlinker
+  def initialize(pin)
+    @pin = pin
+  end
+
+  def run
+    3.times do |i|
+      puts "tick=#{i}"
+      sleep 0.2
+    end
+  end
+end
+
+puts "Hover over these calls to inspect their documentation"
+
+deposit(100)
+review_sample([], {})
+
+blinker = LedBlinker.new(25)
+blinker.run

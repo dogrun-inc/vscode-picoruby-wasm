@@ -49,7 +49,7 @@ function convertRdocPlainText(text: string): string {
 		}
 		const closing = text.indexOf('+', position + 1);
 		const content = text.slice(position + 1, closing);
-		if (closing === -1 || !content || content.includes('\n')) {
+		if (closing === -1 || !content || content.trim() !== content || content.includes('\n')) {
 			position++;
 			continue;
 		}

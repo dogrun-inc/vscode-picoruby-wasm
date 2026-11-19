@@ -233,12 +233,20 @@ function appendYardTag(kind: string, content: string, sections: DocSections): vo
 	if (kind === 'param') {
 		const param = parseYardParam(content);
 		if (param) {
-			sections.params.push('- `' + param.name + '`' + (param.type ? ' (`' + param.type + '`)' : '') + (param.description ? ' — ' + convertRdocInlineMarkup(param.description) : ''));
+			sections.params.push(
+				'- `' + param.name + '`' + (param.type ? ' (`' + param.type + '`)' : '') +
+				(param.description ? ' — ' + convertRdocInlineMarkup(param.description) : '')
+			);
 		}
 	} else if (kind === 'return' || kind === 'raise') {
 		const typed = parseYardTypedDescription(content);
-		const formatted = (typed.type ? '`' + typed.type + '`' : '') + (typed.type && typed.description ? ' — ' : '') + convertRdocInlineMarkup(typed.description);
-		if (kind === 'return') { sections.returns.push('**Returns:** ' + formatted); }
+		const formatted =
+			(typed.type ? '`' + typed.type + '`' : '') +
+			(typed.type && typed.description ? ' — ' : '') +
+			convertRdocInlineMarkup(typed.description);
+		if (kind === 'return') {
+			sections.returns.push('**Returns:** ' + formatted);
+		}
 		else { sections.raises.push('- ' + formatted); }
 	} else if (kind === 'note') {
 		sections.extras.push('> **Note:** ' + convertRdocInlineMarkup(content));
@@ -290,6 +298,11 @@ export function parseRubyDoc(rawComment: string): string {
 		appendYardTag(kind, content, sections);
 	}
 	const { description, params, returns, raises, extras } = sections;
-	return [description.join('\n').trim(), params.length ? '**Parameters:**\n\n' + params.join('\n') : '', ...returns,
-		raises.length ? '**Raises:**\n\n' + raises.join('\n') : '', ...extras].filter(Boolean).join('\n\n');
+	return [
+		description.join('\n').trim(),
+		params.length ? '**Parameters:**\n\n' + params.join('\n') : '',
+		...returns,
+		raises.length ? '**Raises:**\n\n' + raises.join('\n') : '',
+		...extras
+	].filter(Boolean).join('\n\n');
 }

@@ -209,7 +209,9 @@ export class PicoRubyHoverProvider implements vscode.HoverProvider, vscode.Dispo
 		}
 		docs ??= Object.hasOwn(BUILTIN_DOCS, word) ? BUILTIN_DOCS[word] : Object.hasOwn(TAG_DOCS, word) ? TAG_DOCS[word] : undefined;
 		if (docs) { return this.hover(docs, range); }
-		const find = (texts: string[]) => texts.flatMap(extractComments).find(definition => definition.name === word || definition.name.split(/::|\./).pop() === word);
+		const find = (texts: string[]) => {
+			return texts.flatMap(extractComments).find(definition => definition.name === word || definition.name.split(/::|\./).pop() === word);
+		};
 		let definition = find(sources);
 		if (!definition && document.uri.scheme === 'file') {
 			const root = path.dirname(document.uri.fsPath);

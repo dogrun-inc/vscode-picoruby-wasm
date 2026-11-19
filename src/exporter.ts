@@ -31,6 +31,15 @@ export async function exportPicoRubyMrbHtml(context: vscode.ExtensionContext, so
 	await exportPicoRubyHtml(context, sourceUri, 'mrb');
 }
 
+/**
+ * Resolves the selected HTML entrypoint, builds the requested export, and writes it under `dist`.
+ *
+ * Reports export failures to the user through a VS Code error message.
+ *
+ * @param context Extension context used to resolve bundled assets.
+ * @param sourceUri Optional HTML file selected from an Explorer context menu.
+ * @param mode Determines whether Ruby source or compiled MRB bytecode is embedded.
+ */
 async function exportPicoRubyHtml(
 	context: vscode.ExtensionContext,
 	sourceUri: vscode.Uri | undefined,
@@ -90,6 +99,15 @@ export async function buildPicoRubyMrbHtml(context: vscode.ExtensionContext, tar
 	return buildSingleHtmlRuntime(context, targetHtmlPath, mrbHtml, vfs);
 }
 
+/**
+ * Embeds the runtime assets and VFS in the supplied HTML document.
+ *
+ * @param context Extension context used to resolve bundled runtime assets.
+ * @param targetHtmlPath Absolute path to the HTML entrypoint.
+ * @param sourceHtml HTML document with external stylesheets already processed.
+ * @param vfs Collected Ruby files to make available to the runtime.
+ * @returns HTML containing the embedded single-file runtime.
+ */
 async function buildSingleHtmlRuntime(
 	context: vscode.ExtensionContext,
 	targetHtmlPath: string,
@@ -110,11 +128,21 @@ async function buildSingleHtmlRuntime(
 	});
 }
 
+/** Describes Ruby source code and its VFS path for compilation. */
 interface RubyScriptEntrypoint {
 	code: string;
 	filename: string;
 }
 
+/**
+ * Replaces each Ruby script element in the HTML with an element containing compiled MRB bytecode.
+ *
+ * @param context Extension context used to locate the MRB compiler.
+ * @param html HTML document whose `text/ruby` and `text/picoruby` scripts are compiled.
+ * @param vfs Collected Ruby files used to resolve script sources and `require` statements.
+ * @returns HTML with the Ruby script elements replaced by compiled bytecode.
+ * @throws If a script's `src` does not resolve to a Ruby file in the VFS or compilation fails.
+ */
 async function replaceRubyScriptsWithMrb(
 	context: vscode.ExtensionContext,
 	html: string,
@@ -122,7 +150,7 @@ async function replaceRubyScriptsWithMrb(
 ): Promise<string> {
 	const rubyScriptRegex = /<script\b(?=[^>]*\btype=["'](?:text\/ruby|text\/picoruby)["'])[^>]*>([\s\S]*?)<\/script>/gi;
 	const replacements: Array<{ source: string; replacement: string }> = [];
-let match: RegExpExecArray | null;
+	let match: RegExpExecArray | null;
 
 	while ((match = rubyScriptRegex.exec(html)) !== null) {
 		const entrypoint = resolveRubyScriptEntrypoint(match[0], match[1], vfs);
@@ -144,6 +172,14 @@ let match: RegExpExecArray | null;
 	);
 }
 
+/**
+ * Resolves a Ruby script element to inline code or a Ruby file in the VFS.
+ *
+ * @param scriptTag Complete script element, used to read its optional `src` attribute.
+ * @param inlineCode Source text inside the script element.
+ * @param vfs Collected Ruby files.
+ * @returns The entrypoint code and filename, or `undefined` if its `src` cannot be resolved.
+ */
 function resolveRubyScriptEntrypoint(scriptTag: string, inlineCode: string, vfs: VfsMap): RubyScriptEntrypoint | undefined {
 	const sourceMatch = scriptTag.match(/\bsrc=["']([^"']+)["']/i);
 	if (!sourceMatch) {
@@ -154,6 +190,16 @@ function resolveRubyScriptEntrypoint(scriptTag: string, inlineCode: string, vfs:
 	return sourcePath ? { code: vfs[sourcePath], filename: sourcePath } : undefined;
 }
 
+/**
+ * Resolves a requested path against the VFS, including `.rb` and `index.rb` candidates.
+ *
+ * Relative requests are based on the importing file; other requests are based at the VFS root.
+ *
+ * @param request Requested Ruby path, optionally containing a query or fragment.
+ * @param importerPath VFS path of the file containing the request.
+ * @param vfs Collected Ruby files.
+ * @returns The matching VFS key, or `undefined` when no candidate exists.
+ */
 function resolveVfsPath(request: string, importerPath: string, vfs: VfsMap): string | undefined {
 	const pathWithoutSuffix = request.split(/[?#]/, 1)[0].replace(/^\/+/, '');
 	const basePath = request.startsWith('./') || request.startsWith('../')
@@ -167,6 +213,12 @@ function resolveVfsPath(request: string, importerPath: string, vfs: VfsMap): str
 	return [basePath, `${basePath}.rb`, `${basePath}/index.rb`].find((candidate) => typeof vfs[candidate] === 'string');
 }
 
+/**
+ * Normalizes a VFS path and rejects paths that escape the VFS root.
+ *
+ * @param filePath Path to normalize.
+ * @returns A normalized relative POSIX path, or `undefined` if it is outside the root.
+ */
 function normalizeVfsPath(filePath: string): string | undefined {
 	const normalized = path.posix.normalize(filePath.replace(/\\/g, '/'));
 	if (normalized === '.' || normalized === '..' || normalized.startsWith('../')) {
@@ -176,6 +228,17 @@ function normalizeVfsPath(filePath: string): string | undefined {
 	return normalized.replace(/^\.\//, '');
 }
 
+/**
+ * Replaces resolvable Ruby `require` lines with their VFS source, recursively.
+ *
+ * Already-loaded files are omitted to prevent repeated inclusion and recursive cycles.
+ *
+ * @param code Ruby source to expand.
+ * @param vfs Collected Ruby files.
+ * @param importerPath VFS path of the source currently being expanded.
+ * @param loadedPaths VFS paths already included during this expansion.
+ * @returns Source with resolvable `require` lines expanded.
+ */
 function expandVfsRequires(code: string, vfs: VfsMap, importerPath: string, loadedPaths = new Set<string>()): string {
 	return code.split('\n').map((line) => {
 		const match = line.match(/^\s*require\s+['"]([^'"]+)['"]\s*(?:#.*)?$/);
@@ -197,6 +260,17 @@ function expandVfsRequires(code: string, vfs: VfsMap, importerPath: string, load
 	}).join('\n');
 }
 
+/**
+ * Compiles Ruby source to MRB bytecode using the extension's bundled compiler.
+ *
+ * The temporary source and output files are removed whether compilation succeeds or fails.
+ *
+ * @param context Extension context used to locate the compiler.
+ * @param source Ruby source code to compile.
+ * @param filename Source filename supplied for the temporary input file.
+ * @returns Compiled MRB bytecode.
+ * @throws If the compiler cannot be executed or does not produce readable output.
+ */
 async function compileRubyToMrb(context: vscode.ExtensionContext, source: string, filename: string): Promise<Buffer> {
 	const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'picoruby-mrbc-'));
 	const sourcePath = path.join(temporaryDirectory, path.basename(filename) || 'entrypoint.rb');
@@ -217,6 +291,14 @@ async function compileRubyToMrb(context: vscode.ExtensionContext, source: string
 	}
 }
 
+/**
+ * Finds a Node.js executable that can run the bundled compiler from the current host.
+ *
+ * In Electron, separate Node.js candidates are checked first, with the current process
+ * executable as the final fallback.
+ *
+ * @returns Executable path or command name for Node.js.
+ */
 async function resolveNodeExecutable(): Promise<string> {
 	if (!process.versions.electron) {
 		return process.execPath;
@@ -247,6 +329,9 @@ async function resolveNodeExecutable(): Promise<string> {
 
 /**
  * Resolves an HTML entrypoint from an explicit URI, the active editor, or a picker.
+ *
+ * @param sourceUri Optional file URI supplied by an Explorer command.
+ * @returns The selected HTML file path, or `undefined` if no file was selected.
  */
 async function resolveTargetHtmlPath(sourceUri?: vscode.Uri): Promise<string | undefined> {
 	if (sourceUri?.scheme === 'file' && /\.html?$/i.test(sourceUri.fsPath)) {
@@ -271,6 +356,11 @@ async function resolveTargetHtmlPath(sourceUri?: vscode.Uri): Promise<string | u
 
 /**
  * Reads a runtime asset shipped with the extension package.
+ *
+ * @param context Extension context used to locate the asset directory.
+ * @param fileName Asset filename relative to the package's `assets` directory.
+ * @param encoding Optional text encoding; omitted to read binary data.
+ * @returns Asset contents as a string when encoded, otherwise as a buffer.
  */
 async function readExtensionAsset(context: vscode.ExtensionContext, fileName: string, encoding?: BufferEncoding): Promise<Buffer | string> {
 	const assetPath = vscode.Uri.joinPath(context.extensionUri, 'assets', fileName).fsPath;
@@ -279,6 +369,12 @@ async function readExtensionAsset(context: vscode.ExtensionContext, fileName: st
 
 /**
  * Inlines safe local stylesheets while preserving external and unsafe references.
+ *
+ * Stylesheet paths that leave the HTML directory are not read or inlined.
+ *
+ * @param htmlContent HTML document containing stylesheet links.
+ * @param htmlPath Filesystem path of the HTML document.
+ * @returns HTML with readable, safe local stylesheets inlined.
  */
 async function inlineExternalCss(htmlContent: string, htmlPath: string): Promise<string> {
 	const htmlDir = path.dirname(htmlPath);
@@ -317,6 +413,13 @@ async function inlineExternalCss(htmlContent: string, htmlPath: string): Promise
 
 /**
  * Injects serialized runtime data and the packaged bootstrap into the HTML document.
+ *
+ * Removes script elements loading the local `init.iife.js`, then inserts the runtime before
+ * the closing body tag, or appends it when the document has no body tag.
+ *
+ * @param html Source HTML document.
+ * @param payload VFS, runtime module, WASM binary, and bootstrap to embed.
+ * @returns HTML document containing the embedded single-file runtime.
  */
 function injectSingleHtmlRuntime(html: string, payload: {
 	vfs: VfsMap;
@@ -347,6 +450,9 @@ function injectSingleHtmlRuntime(html: string, payload: {
 
 /**
  * Escapes JSON characters that could terminate or alter an inline script element.
+ *
+ * @param value Value to serialize for inclusion in an inline script.
+ * @returns JSON text safe to embed in an HTML script element.
  */
 function jsonForHtmlScript(value: unknown): string {
 	const serialized = JSON.stringify(value);

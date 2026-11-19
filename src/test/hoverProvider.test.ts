@@ -34,6 +34,23 @@ suite('PicoRuby hover', () => {
 		assert.strictEqual(definitions[2].name, 'Helpers');
 	});
 
+	test('preserves singleton method names and resolves their documentation by method name', async () => {
+		for (const name of ['service.charge', 'Wallet::charge', 'Payments::Wallet::charge', 'self.charge']) {
+			const signature = `def ${name}(amount)`;
+			const text = `charge(100)\n# Charges the wallet\n${signature}\nend`;
+			assert.deepStrictEqual(extractComments(text), [{
+				name,
+				signature,
+				description: 'Charges the wallet'
+			}]);
+			const result = await hover(text, 'charge');
+			assert.ok(result, name);
+			const body = (result.contents[0] as vscode.MarkdownString).value;
+			assert.ok(body.includes(signature), name);
+			assert.ok(body.includes('Charges the wallet'), name);
+		}
+	});
+
 	test('qualified APIs resolve at each segment', async () => {
 		for (const [text, words] of [
 			['SQLite3::Database.new(":memory:")', ['SQLite3', 'Database', 'new']],

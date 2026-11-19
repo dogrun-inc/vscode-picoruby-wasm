@@ -97,6 +97,18 @@ suite('Ruby documentation parser', () => {
 			'### Heading\n**bold** *italic* `some_code`\n* item\n- other\nsnake_case **Markdown** `*literal*`');
 	});
 
+	test('preserves plus operators and edge whitespace while converting genuine code spans', () => {
+		for (const [source, expected] of [
+			['Returns a + b + c.', 'Returns a + b + c.'],
+			['C++ and +Ruby+', 'C++ and `Ruby`'],
+			['+単位: 円+', '`単位: 円`'],
+			['Text: + leading+', 'Text: + leading+'],
+			['Text: +trailing +', 'Text: +trailing +']
+		]) {
+			assert.strictEqual(parseRubyDoc(source), expected, source);
+		}
+	});
+
 	test('keeps Markdown and code contents while converting surrounding decorations', () => {
 		assert.strictEqual(parseRubyDoc('*before* [*link*](https://example.com) _after_ **+bold+** `+code+` +*literal* _value_+'),
 			'**before** [*link*](https://example.com) *after* **+bold+** `+code+` `*literal* _value_`');

@@ -4,7 +4,7 @@ All notable changes to the PicoRuby WASM extension are documented in this file.
 
 ## [Unreleased]
 
-## [0.4.0] - Unreleased
+## [0.4.0] - 2026-11-20
 
 ### Added
 

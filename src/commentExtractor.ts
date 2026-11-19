@@ -16,7 +16,7 @@ export function extractComments(source: string): UserDefinition[] {
 			comments.push(comment[1]);
 			continue;
 		}
-		const definition = /^\s*(?:class|module)\s+([A-Z]\w*(?:::[A-Z]\w*)*)|^\s*def\s+((?:(?:self|[A-Z]\w*(?:::[A-Z]\w*)*)\.)?[a-zA-Z_]\w*[!?=]?)/.exec(line);
+		const definition = /^\s*(?:class|module)\s+([A-Z]\w*(?:::[A-Z]\w*)*)|^\s*def\s+((?:[a-zA-Z_]\w*(?:::[A-Z]\w*)*(?:::|\.))?[a-zA-Z_]\w*[!?=]?)/.exec(line);
 		if (definition) {
 			definitions.push({ name: definition[1] ?? definition[2], signature: line.trim(), description: parseRubyDoc(comments.join('\n')) });
 		}

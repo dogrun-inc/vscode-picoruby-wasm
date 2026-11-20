@@ -103,6 +103,17 @@ describe('webviewRuntime.js Test Suite', () => {
 			]);
 		});
 
+		test('external src scripts are source-mapped to their own file', () => {
+			const ruby = 'puts "first"\nputs "second"';
+			const vfs = { 'main.rb': ruby };
+			const tasks = webviewRuntime.collectDebugRubyScripts(
+				'<script type="text/ruby" src="main.rb"></script>', '', vfs, { programPath: 'index.html' }
+			);
+			expect(tasks).toEqual([{ code: ruby, filename: 'main.rb', sourcePath: 'main.rb', lineOffset: 0 }]);
+			const { sourceMap } = webviewRuntime.buildDebugTaskCode(tasks[0], vfs, {});
+			expect(sourceMap).toEqual({ 2: { path: 'main.rb', line: 1 }, 3: { path: 'main.rb', line: 2 } });
+		});
+
 		test('collectDebugRubyScripts should retain inline scripts after external scripts', () => {
 			const tasks = webviewRuntime.collectDebugRubyScripts(
 				'<script type="text/ruby" src="main.rb"></script><script type="text/ruby">puts "inline"</script>',

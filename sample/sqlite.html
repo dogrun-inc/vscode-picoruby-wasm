@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>PicoRuby SQLite sample</title>
+  </head>
+  <body>
+    <h1>PicoRuby SQLite sample</h1>
+    <p>Set breakpoints in the Ruby script below and check the Debug Console for the query results.</p>
+
+    <script type="text/ruby">
+      require 'js'
+      require 'sqlite3'
+
+      # 1. インメモリデータベースの作成
+      db = SQLite3::Database.new(':memory:')
+
+      # 2. テーブル作成とレコード挿入
+      db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);')
+      db.execute('INSERT INTO users (name) VALUES (?);', ['PicoRuby User'])
+      db.execute('INSERT INTO users (name) VALUES (?);', ['Alice'])
+
+      # 3. 取得と出力
+      rows = db.execute('SELECT * FROM users;')
+      rows.each do |row|
+        puts "ID: #{row[0]}, Name: #{row[1]}"
+      end
+    </script>
+  </body>
+</html>

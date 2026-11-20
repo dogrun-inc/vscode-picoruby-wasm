@@ -6,6 +6,14 @@
   </head>
   <body>
     <h1>Injection Test</h1>
+
+    <!-- textarea 内の puts はRubyのホバー対象にならない -->
+    <textarea rows="2" cols="60"><script type="text/ruby">puts "textarea"</script></textarea>
+
+    <!-- 属性値内の puts もRubyのホバー対象にならない -->
+    <div data-example='<script type="text/ruby">puts "attribute"</script>'>属性値内のコード例</div>
+
+    <!-- この script 内の puts はRubyのホバー対象になる -->
     <script type="text/ruby">
       class App
         def call

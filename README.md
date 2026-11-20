@@ -9,9 +9,9 @@
 
 A Visual Studio Code extension for developing and debugging PicoRuby. Bundles PicoRuby WASM **v4.0.5**.
 
-This extension provides syntax highlighting and code completion for PicoRuby, as well as **interactive debugging of PicoRuby code embedded in HTML files, running inside VS Code's Webview**. Projects split across multiple `.rb` files are supported: `require` statements are resolved from the files next to your HTML, and breakpoints and stepping work inside those files.
+This extension provides syntax highlighting, code completion, and hover documentation for PicoRuby, as well as **interactive debugging of PicoRuby code embedded in HTML files, running inside VS Code's Webview**. Projects split across multiple `.rb` files are supported: `require` statements are resolved from the files next to your HTML, and breakpoints and stepping work inside those files.
 
-> **Note**: v0.3.1 fixes a Webview CSP violation when starting Funicular. Please report issues you encounter on GitHub.
+> **Note**: v0.4.0 adds hover documentation for built-in APIs and user definitions. Please report issues you encounter on GitHub.
 
 ---
 
@@ -28,7 +28,28 @@ This extension provides syntax highlighting and code completion for PicoRuby, as
 - **Context-Aware Completion**: Supports `::` and `.` access patterns.
 - **Snippets**: Completion templates for common structures like `def` and `class`.
 
-### 3. PicoRuby WASM Debugger (Powered by PicoRuby v4.0.5)
+### 3. Hover Documentation
+Hover over an identifier in a Ruby / PicoRuby file or inside an HTML `<script type="text/ruby">` / `<script type="text/picoruby">` body to see its documentation.
+
+- **Built-in documentation**: Covers selected APIs such as `puts`, `JS.global`, and `Funicular::Component`. Descriptions are shown in Japanese when VS Code's display language is Japanese, and in English otherwise.
+- **User definitions**: Shows method, class, and module definition lines and contiguous `#` comments immediately preceding them. Comments are not translated; supported markup is formatted for display.
+- **Search scope**: Built-in documentation takes precedence, followed by definitions in the current file. If neither matches and the current file is local, `.rb` files in its directory and subdirectories are searched. The entire project is not necessarily searched; definitions are matched by name regardless of `require` statements. Unsaved editor content takes precedence for collected `.rb` files that are open.
+- **Comment formats**: Supports some basic RDoc and YARD syntax, including RDoc headings and text formatting and the YARD tags `@param`, `@return`, `@raise`, `@example`, `@note`, and `@see`. Comments in `=begin` / `=end` blocks are not supported.
+
+```ruby
+# Adds an amount to the total.
+# @param amount [Integer] amount to add
+# @return [Integer] updated total
+# @example
+#   add_amount(100)
+def add_amount(amount)
+  @total += amount
+end
+```
+
+> **Hover performance**: Searching for definitions in other files creates a cached index and recursive file watcher for the current file's directory. These remain until the extension is deactivated, even after the file is closed. Browsing many directories or large directory trees can increase memory and file-watching resource use. Reload the VS Code window to release them.
+
+### 4. PicoRuby WASM Debugger (Powered by PicoRuby v4.0.5)
 Renders the currently open HTML file in VS Code's Webview panel while executing and debugging the embedded PicoRuby code in real time.
 
 - **Multi-file projects**: `.rb` files in the same directory tree as the HTML are collected into a virtual file system, and local `require` statements are resolved from it.
@@ -37,7 +58,7 @@ Renders the currently open HTML file in VS Code's Webview panel while executing 
 - **Variable Inspection**: Real-time scope inspection for local variables (`Locals`) and global variables (`Globals`).
 - **Debug Console Evaluation**: Evaluate arbitrary PicoRuby expressions in the paused scope.
 
-### 4. Single-File HTML Export
+### 5. Single-File HTML Export
 Bundle your HTML, all collected `.rb` files, and the PicoRuby WASM runtime into one self-contained HTML file that runs in any browser without this extension.
 
 - **`PicoRuby: Export Single HTML`**: Ships Ruby source (`dist/index.html`).
@@ -156,6 +177,20 @@ You can also reference a file directly from the HTML: `<script type="text/ruby" 
 
 Open the Command Palette with the target HTML active and run `PicoRuby: Export Single HTML` or `PicoRuby: Export MRB HTML`. The result is written to a `dist/` folder next to the source HTML.
 
+### Try the Samples
+
+Open [`sample/`](sample/) as a workspace and run `PicoRuby: Enable` to try completion in `.rb` files. To debug a sample, make its HTML file active and press F5. Set breakpoints before starting the debug session.
+
+| What to check | Sample and steps |
+|---|---|
+| `.rb` syntax highlighting, completion, and hover documentation | Open [`editor/picoruby.rb`](sample/editor/picoruby.rb), try completing `puts` or the `def` / `class` snippets, and hover over the `deposit` and `review_sample` calls to see their documentation comments |
+| Ruby and hover in HTML | Compare `puts` inside the Ruby script with occurrences in the `textarea` and attribute value in [`editor/picoruby_injection.html`](sample/editor/picoruby_injection.html) |
+| Official picoruby.wasm demo | Debug [`index.html`](sample/index.html) (the L-Chika sample from the [`@picoruby/wasm-wasi`](https://www.npmjs.com/package/@picoruby/wasm-wasi) page) and use the button in the Webview to blink the LEDs |
+| Breakpoints, stepping, and external scripts | Debug [`debug/index.html`](sample/debug/index.html), stop in [`debug/main.rb`](sample/debug/main.rb) loaded via `src`, and inspect variables and the Debug Console |
+| Multi-file `require` | Debug [`vfs-require/index.html`](sample/vfs-require/index.html); test the Webview button and breakpoints in the `.rb` files |
+| SQLite | Debug [`sqlite.html`](sample/sqlite.html) and check the query results in the Debug Console |
+| Funicular | Debug [`funicular.html`](sample/funicular.html) and increment the counter using the Webview button |
+
 ---
 
 ## Debugger Controls
@@ -196,7 +231,7 @@ For extension development, adding `"--disable-extensions"` to the `args` of the 
 
 ## Release Status
 
-* **Current Version**: `v0.3.1` (Includes PicoRuby v4.0.5; fixes the Webview CSP violation when starting Funicular)
+* **Current Version**: `v0.4.0` (Includes PicoRuby v4.0.5 and hover documentation)
 
 Please report bugs or feature requests on GitHub Issues:
 

@@ -9,9 +9,9 @@
 
 Visual Studio CodeでPicoRubyを開発・デバッグするための拡張機能です。内蔵PicoRuby WASMのバージョンは **v4.0.5** です。
 
-本拡張機能では、PicoRubyコードの構文ハイライトや補完機能に加え、**VS Codeで現在開いているHTMLファイルをWebview上で動かしながら、埋め込まれたPicoRubyコードをインタラクティブにデバッグ実行**できます。複数の `.rb` ファイルに分割したプロジェクトにも対応しており、`require` はHTMLと同じディレクトリ配下のファイルから解決され、それらのファイル内でもブレークポイントとステップ実行が機能します。
+本拡張機能では、PicoRubyコードの構文ハイライト、補完、ホバードキュメントに加え、**VS Codeで現在開いているHTMLファイルをWebview上で動かしながら、埋め込まれたPicoRubyコードをインタラクティブにデバッグ実行**できます。複数の `.rb` ファイルに分割したプロジェクトにも対応しており、`require` はHTMLと同じディレクトリ配下のファイルから解決され、それらのファイル内でもブレークポイントとステップ実行が機能します。
 
-> **Note**: v0.3.1 では、Funicular 起動時の Webview の CSP 違反を修正しました。不具合を見つけた際は GitHub Issue でお知らせください。
+> **Note**: v0.4.0 では、組み込みAPIやユーザー定義のホバードキュメントに対応しました。不具合を見つけた際は GitHub Issue でお知らせください。
 
 ---
 
@@ -28,7 +28,28 @@ Visual Studio CodeでPicoRubyを開発・デバッグするための拡張機能
 - **コンテキスト補完**: `::` や `.` アクセス形式に対応
 - **スニペット**: `def`, `class` などの基本構文入力補完
 
-### 3. PicoRuby WASM デバッガー（PicoRuby v4.0.5 搭載）
+### 3. ホバードキュメント
+Ruby / PicoRuby ファイルと、HTML内の `<script type="text/ruby">` / `<script type="text/picoruby">` の本文で、識別子にマウスポインターを合わせるとドキュメントを表示します。
+
+- **組み込みドキュメント**: `puts`、`JS.global`、`Funicular::Component` などの一部のAPIを対象とします。説明はVS Codeの表示言語が日本語の場合は日本語、それ以外の場合は英語で表示します。
+- **ユーザー定義**: メソッド・クラス・モジュールの定義行と、その直前に連続して記述した `#` コメントを表示します。コメントは翻訳せず、対応する記法を整形します。
+- **検索範囲**: 組み込みドキュメント、現在のファイル内の定義の順に検索し、見つからなければ、ローカルファイルに限り、そのファイルと同じディレクトリおよび配下の `.rb` ファイルを検索します。プロジェクト全体が検索されるとは限らず、`require` の有無にかかわらず名前で一致させます。収集済みの `.rb` ファイルが開かれている場合は、未保存の編集内容を優先します。
+- **コメント形式**: RDocの見出し・文字装飾や、YARDの `@param`、`@return`、`@raise`、`@example`、`@note`、`@see` など、基本的な記法の一部に対応しています。`=begin` / `=end` 形式のコメントは対象外です。
+
+```ruby
+# 合計に金額を加算します。
+# @param amount [Integer] 加算する金額
+# @return [Integer] 加算後の合計
+# @example
+#   add_amount(100)
+def add_amount(amount)
+  @total += amount
+end
+```
+
+> **ホバーのパフォーマンス**: 他のファイルの定義を検索すると、対象ファイルのディレクトリに対する索引と再帰的なファイル監視が作成されます。ファイルを閉じても、拡張機能が無効化されるまで保持されます。多数のディレクトリや大きなディレクトリツリーを閲覧すると、メモリやファイル監視のリソース使用量が増えることがあります。解放するにはVS Codeのウィンドウを再読み込みしてください。
+
+### 4. PicoRuby WASM デバッガー（PicoRuby v4.0.5 搭載）
 VS Codeのエディターで現在開いているHTMLファイルをWebviewパネルに描画しながら、内部のPicoRubyコードを同期実行・デバッグします。
 
 - **複数ファイル構成**: HTMLと同じディレクトリツリー内の `.rb` ファイルを仮想ファイルシステムに収集し、ローカルの `require` をそこから解決
@@ -37,7 +58,7 @@ VS Codeのエディターで現在開いているHTMLファイルをWebviewパ�
 - **変数スコープの確認**: 一時停止中のローカル変数（`Locals`）およびグローバル変数（`Globals`）のリアルタイム参照
 - **デバッグコンソールでの評価**: 停止中のスコープで任意のPicoRuby式を評価
 
-### 4. 単一HTMLエクスポート
+### 5. 単一HTMLエクスポート
 HTML・収集した全 `.rb` ファイル・PicoRuby WASMランタイムを1つのHTMLファイルにまとめ、本拡張機能なしでブラウザから実行できる形で出力します。
 
 - **`PicoRuby: Export Single HTML`**: Rubyソースのまま同梱（`dist/index.html`）
@@ -155,6 +176,20 @@ project/
 
 対象のHTMLをアクティブにした状態でコマンドパレットから `PicoRuby: Export Single HTML` または `PicoRuby: Export MRB HTML` を実行します。結果は元のHTMLと同じ場所の `dist/` フォルダに出力されます。
 
+### サンプルで動作を確認する
+
+[`sample/`](sample/) をワークスペースとして開き、`.rb` ファイルで補完を試す場合は `PicoRuby: Enable` を実行します。デバッグする場合は、表のHTMLファイルをアクティブにして F5 を押します。ブレークポイントはデバッグ開始前に設定してください。
+
+| 確認内容 | サンプルと操作 |
+|---|---|
+| `.rb` ファイルの構文ハイライト・補完・ホバー | [`editor/picoruby.rb`](sample/editor/picoruby.rb) を開き、`puts` などの入力や `def` / `class` のスニペットを試し、`deposit` と `review_sample` の呼び出しにホバーしてドキュメントコメントを確認する |
+| HTML内のRubyとホバー | [`editor/picoruby_injection.html`](sample/editor/picoruby_injection.html) のRubyスクリプト内と、`textarea` や属性値内の `puts` を比較する |
+| picoruby.wasm 公式デモ | [`index.html`](sample/index.html)（[`@picoruby/wasm-wasi`](https://www.npmjs.com/package/@picoruby/wasm-wasi) のページにあるLチカのサンプル）をデバッグし、WebviewのボタンでLEDを点滅させる |
+| ブレークポイント・ステップ実行・外部スクリプト | [`debug/index.html`](sample/debug/index.html) をデバッグし、`src` で読み込まれる [`debug/main.rb`](sample/debug/main.rb) で停止して変数とデバッグコンソールを確認する |
+| 複数ファイルの `require` | [`vfs-require/index.html`](sample/vfs-require/index.html) をデバッグし、Webviewのボタンと `.rb` ファイル内のブレークポイントを確認する |
+| SQLite | [`sqlite.html`](sample/sqlite.html) をデバッグし、クエリ結果をデバッグコンソールで確認する |
+| Funicular | [`funicular.html`](sample/funicular.html) をデバッグし、Webviewのボタンでカウンターを増やす |
+
 ---
 
 ## デバッガーの操作方法
@@ -195,7 +230,7 @@ Windows 環境で **Jupyter Notebook Renderers**（`ms-toolsai.jupyter-renderers
 
 ## リリース状況
 
-* **現在のバージョン**: `v0.3.1`（PicoRuby v4.0.5 搭載・Funicular 起動時の Webview の CSP 違反を修正）
+* **現在のバージョン**: `v0.4.0`（PicoRuby v4.0.5 搭載・ホバードキュメントに対応）
 
 不具合や機能要望がございましたら、GitHub Issueにてお知らせください。（日本語でOKです）
 

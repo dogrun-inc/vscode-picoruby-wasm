@@ -2,7 +2,7 @@
   "name": "picoruby-wasm",
   "displayName": "PicoRuby WASM",
   "description": "Syntax highlighting, code completion, and a WebView-based debugger for PicoRuby WASM in VS Code",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "icon": "images/icon.png",
   "publisher": "dogrun-inc",
   "license": "MIT",
@@ -30,12 +30,15 @@
   ],
   "activationEvents": [
     "onLanguage:picoruby",
+    "onLanguage:ruby",
+    "onLanguage:html",
     "onDebugInitialConfigurations:picoruby-wasm",
     "onDebugResolve:picoruby-wasm",
     "onCommand:picoruby.enable",
     "onCommand:picoruby.disable"
   ],
   "main": "./out/extension.js",
+  "l10n": "./l10n",
   "contributes": {
     "languages": [
       {

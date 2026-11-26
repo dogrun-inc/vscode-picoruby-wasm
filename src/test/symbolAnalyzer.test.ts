@@ -114,4 +114,195 @@ testSuite('Symbol analyzer', () => {
 		assert.strictEqual(extra.endLine, 8);
 		assert.strictEqual(findSymbol(table.rootScope, 'ignored'), undefined);
 	});
+
+	test('tokenizes literals and ignores keywords inside strings, regexps, and comments', () => {
+		const source = [
+			'# opening comment',
+			"class LiteralSample",
+			"  def literals",
+			"    single = 'escaped \\' end'",
+			'    double = "escaped \\" def"',
+			'    pattern = /end[\\/]def/ix',
+			'    quotient = total / 2',
+			'    label = :ready!',
+			'    quoted = :"quoted symbol"',
+			'    value = 0x10 + 0b11 + 0o7',
+			'    exponent = 1.2e+3',
+			'  end # def ignored',
+			'end'
+		].join('\r\n');
+		const table = analyzeRubySource('literals.rb', source);
+		const sample = child(table.rootScope, 'class', 'LiteralSample');
+		const method = child(sample, 'method', 'literals');
+
+		assert.deepStrictEqual(
+			method.symbols.map(symbol => symbol.inferredType),
+			['String', 'String', 'String', undefined, 'Symbol', 'Symbol', 'Integer', 'Float']
+				.slice(0, method.symbols.length)
+		);
+		assert.strictEqual(method.endLine, 12);
+		assert.strictEqual(findSymbol(table.rootScope, 'ignored'), undefined);
+		assert.strictEqual(method.symbols.find(symbol => symbol.name === 'value')?.column, 4);
+	});
+
+	test('records definition variants, parameters, superclasses, and local variable kinds', () => {
+		const source = [
+			'class Base',
+			'end',
+			'module Models::Storage',
+			'end',
+			'class Child::Record < Models::Base',
+			'  def parse(value = build(1), **options, &block)',
+			'  end',
+			'  def save! output, mode: nil',
+			'  end',
+			'  def self.find?',
+			'  end',
+			'  @@total = 1',
+			'  @cache = {}',
+			'  LIMIT = 10',
+			'end',
+			'class',
+			'def',
+			'ignored = true'
+		].join('\n');
+		const table = analyzeRubySource('definitions.rb', source);
+		const recordSymbol = table.rootScope.symbols.find(symbol => symbol.name === 'Child::Record');
+		const record = child(table.rootScope, 'class', 'Child::Record');
+
+		assert.strictEqual(recordSymbol?.superClass, 'Models::Base');
+		assert.deepStrictEqual(
+			record.symbols.filter(symbol => symbol.kind === 'method').map(symbol => symbol.name),
+			['parse', 'save!', 'self.find?']
+		);
+		assert.deepStrictEqual(record.symbols.find(symbol => symbol.name === 'parse')?.params, ['value', 'options', 'block']);
+		assert.deepStrictEqual(record.symbols.find(symbol => symbol.name === 'save!')?.params, ['output', 'mode']);
+		assert.strictEqual(record.symbols.find(symbol => symbol.name === '@@total')?.kind, 'cvar');
+		assert.strictEqual(record.symbols.find(symbol => symbol.name === '@cache')?.kind, 'ivar');
+		assert.strictEqual(record.symbols.find(symbol => symbol.name === 'LIMIT')?.kind, 'constant');
+	});
+
+	test('handles control structures without creating local scopes', () => {
+		const source = [
+			'def process(values)',
+			'  if values',
+			'    from_if = true',
+			'  end',
+			'  unless false',
+			'    from_unless = 2',
+			'  else',
+			'    from_else = 3',
+			'  end',
+			'  while ready?',
+			'    from_while = 4',
+			'  end',
+			'  until stopped?',
+			'    from_until = 5',
+			'  end',
+			'  for item in values',
+			'    from_for = item',
+			'  end',
+			'  begin',
+			'    from_begin = 6',
+			'  end',
+			'  case status',
+			'  when :open',
+			'    from_case = 7',
+			'  end',
+			'  postfix = 8 if enabled',
+			'end'
+		].join('\n');
+		const table = analyzeRubySource('controls.rb', source);
+		const method = child(table.rootScope, 'method', 'process');
+
+		assert.deepStrictEqual(method.children, []);
+		assert.deepStrictEqual(
+			method.symbols.filter(symbol => symbol.kind === 'lvar').map(symbol => symbol.name),
+			['from_if', 'from_unless', 'from_else', 'from_while', 'from_until', 'from_for', 'from_begin', 'from_case', 'postfix']
+		);
+	});
+
+	test('distinguishes brace blocks from hash and array delimiters', () => {
+		const source = [
+			'def transform(items)',
+			'  hashes = {one: {nested: true}}',
+			'  items.map { |item, @captured|',
+			'    [item, {key: item}]',
+			'  }',
+			'  while ready? do',
+			'    loop_value = 1',
+			'  end',
+			'end'
+		].join('\n');
+		const table = analyzeRubySource('blocks.rb', source);
+		const method = child(table.rootScope, 'method', 'transform');
+		const block = child(method, 'block');
+
+		assert.strictEqual(method.children.length, 1);
+		assert.deepStrictEqual(block.symbols.map(symbol => symbol.name), ['item', '@captured']);
+		assert.strictEqual(block.endLine, 5);
+		assert.ok(method.symbols.some(symbol => symbol.name === 'loop_value'));
+		assert.strictEqual(method.symbols.find(symbol => symbol.name === 'hashes')?.inferredType, 'Hash');
+	});
+
+	test('infers every supported assignment form and defers documented returns', () => {
+		const source = [
+			'# @return [Product]',
+			'def product',
+			'end',
+			'method_value = self.product',
+			'float_value = 3.14',
+			'string_value = "value"',
+			'symbol_value = :value',
+			'array_value = [1]',
+			'hash_value = {}',
+			'true_value = true',
+			'false_value = false',
+			'instance_value = Thing.new',
+			'nil_value = nil',
+			'# Constant documentation',
+			'VALUE = 1'
+		].join('\n');
+		const table = analyzeRubySource('inference.rb', source);
+
+		assert.strictEqual(findSymbol(table.rootScope, 'method_value')?.inferredType, 'Product');
+		assert.strictEqual(findSymbol(table.rootScope, 'float_value')?.inferredType, 'Float');
+		assert.strictEqual(findSymbol(table.rootScope, 'string_value')?.inferredType, 'String');
+		assert.strictEqual(findSymbol(table.rootScope, 'symbol_value')?.inferredType, 'Symbol');
+		assert.strictEqual(findSymbol(table.rootScope, 'array_value')?.inferredType, 'Array');
+		assert.strictEqual(findSymbol(table.rootScope, 'hash_value')?.inferredType, 'Hash');
+		assert.strictEqual(findSymbol(table.rootScope, 'true_value')?.inferredType, 'Boolean');
+		assert.strictEqual(findSymbol(table.rootScope, 'false_value')?.inferredType, 'Boolean');
+		assert.strictEqual(findSymbol(table.rootScope, 'instance_value')?.inferredType, 'Thing');
+		assert.strictEqual(findSymbol(table.rootScope, 'nil_value')?.inferredType, undefined);
+		assert.strictEqual(findSymbol(table.rootScope, 'VALUE')?.rawComment, 'Constant documentation');
+	});
+
+	test('handles empty source, stale comments, duplicate lines, and line offsets', () => {
+		const table = analyzeRubySource('edge.rb', '# stale\n\nVALUE = 1; VALUE = 2', 4);
+		const empty = analyzeRubySource('empty.rb', '');
+
+		assert.strictEqual(empty.rootScope.startLine, 1);
+		assert.strictEqual(empty.rootScope.endLine, 1);
+		assert.deepStrictEqual(empty.rootScope.symbols, []);
+		assert.deepStrictEqual(table.rootScope.symbols.map(symbol => symbol.name), ['VALUE']);
+		assert.strictEqual(table.rootScope.symbols[0].line, 7);
+		assert.strictEqual(table.rootScope.symbols[0].rawComment, undefined);
+		assert.strictEqual(table.rootScope.endLine, 7);
+	});
+
+	test('ignores HTML scripts without Ruby types and tolerates multiline raw text', () => {
+		const table = analyzeHtmlRubySource('scripts.html', [
+			'<script>def ignored_without_type; end</script>',
+			'<script type=text/picoruby>def ignored_other_type; end</script>',
+			'<script type="TEXT/RUBY">',
+			'module Embedded',
+			'end',
+			'</script>'
+		].join('\n'));
+
+		assert.strictEqual(table.rootScope.startLine, 1);
+		assert.strictEqual(table.rootScope.endLine, 6);
+		assert.deepStrictEqual(table.rootScope.children.map(scope => scope.name), ['Embedded']);
+	});
 });

@@ -1,57 +1,96 @@
+/** Kinds of Ruby definitions and assignments retained by the analyzer. */
 export type SymbolKind = 'class' | 'module' | 'method' | 'ivar' | 'cvar' | 'lvar' | 'constant' | 'param';
 
+/** Describes one symbol and the optional metadata derived from its definition. */
 export interface SymbolInfo {
+	/** Ruby symbol name, including namespace separators where applicable. */
 	name: string;
+	/** Semantic category of the definition. */
 	kind: SymbolKind;
+	/** One-based source line containing the definition. */
 	line: number;
+	/** Zero-based source column containing the definition. */
 	column: number;
+	/** Best-effort Ruby type inferred from an assignment or documented return. */
 	inferredType?: string;
+	/** Qualified superclass name for a class definition. */
 	superClass?: string;
+	/** Parameter names for a method definition. */
 	params?: string[];
+	/** Contiguous comment text immediately preceding the definition. */
 	rawComment?: string;
 }
 
+/** Represents a lexical scope and the symbols declared directly within it. */
 export interface ScopeNode {
+	/** Ruby construct that created this scope. */
 	type: 'global' | 'class' | 'module' | 'method' | 'block';
+	/** Name of the class, module, or method when applicable. */
 	name?: string;
+	/** One-based line where the scope begins. */
 	startLine: number;
+	/** One-based line where the scope ends, or the final source line if unclosed. */
 	endLine: number;
+	/** Symbols declared directly in this scope. */
 	symbols: SymbolInfo[];
+	/** Lexically nested scopes in source order. */
 	children: ScopeNode[];
 }
 
+/** Complete symbol and scope analysis for one Ruby or embedded-Ruby source. */
 export interface FileSymbolTable {
+	/** Source path supplied by the caller. */
 	filePath: string;
+	/** Global scope containing all top-level definitions. */
 	rootScope: ScopeNode;
 }
 
 type TokenKind = 'identifier' | 'constant' | 'variable' | 'number' | 'string' | 'symbol' | 'comment' | 'operator' | 'newline';
 
 interface Token {
+	/** Coarse lexical category used by the parser. */
 	kind: TokenKind;
+	/** Original token text, or a single normalized newline. */
 	value: string;
+	/** One-based source line. */
 	line: number;
+	/** Zero-based source column. */
 	column: number;
 }
 
+/** Tracks one open Ruby construct while the token stream is scanned. */
 interface ScopeFrame {
+	/** Scope receiving declarations while this frame is active. */
 	scope: ScopeNode;
+	/** Token that closes this frame. */
 	closer: 'end' | 'brace';
+	/** Whether the frame introduced a distinct lexical scope. */
 	createsScope: boolean;
+	/** Opening line, used to distinguish control-structure `do` blocks. */
 	openedOnLine: number;
 }
 
+/** Ruby control structures that consume `end` without creating a local scope. */
 const CONTROL_KEYWORDS = new Set(['if', 'unless', 'while', 'until', 'for', 'begin', 'case']);
+/** Extracts the first documented YARD return type from a comment block. */
 const METHOD_RETURNS = /(?:^|\n)\s*@return\s+\[([^\]]+)\]/;
 
+/** Returns whether a character can begin a Ruby identifier. */
 function isIdentifierStart(character: string | undefined): boolean {
 	return character !== undefined && /[A-Za-z_]/.test(character);
 }
 
+/** Returns whether a character can continue a Ruby identifier. */
 function isIdentifierPart(character: string | undefined): boolean {
 	return character !== undefined && /[A-Za-z0-9_]/.test(character);
 }
 
+/**
+ * Determines whether `/` starts a regular expression rather than division.
+ *
+ * This deliberately implements a small lexical heuristic because the analyzer
+ * does not require a full Ruby grammar.
+ */
 function regexCanStart(previous: Token | undefined): boolean {
 	if (!previous || previous.kind === 'newline' || previous.kind === 'operator' && ![')', ']', '}'].includes(previous.value)) {
 		return true;
@@ -59,6 +98,16 @@ function regexCanStart(previous: Token | undefined): boolean {
 	return previous.kind === 'identifier' && ['return', 'break', 'next', 'raise'].includes(previous.value);
 }
 
+/**
+ * Tokenizes the source while preserving 1-based lines and 0-based columns.
+ *
+ * String contents, regular-expression bodies, and comments are emitted as
+ * opaque tokens so Ruby keywords inside them cannot affect scope tracking.
+ *
+ * @param source Ruby source text to scan.
+ * @param lineOffset Number of source lines preceding an embedded Ruby block.
+ * @returns Tokens in source order, including newline and comment tokens.
+ */
 function tokenize(source: string, lineOffset: number): Token[] {
 	const tokens: Token[] = [];
 	let index = 0;
@@ -66,6 +115,7 @@ function tokenize(source: string, lineOffset: number): Token[] {
 	let column = 0;
 	let previous: Token | undefined;
 
+	/** Appends one token and updates the state used to recognize regex literals. */
 	const add = (kind: TokenKind, value: string, tokenLine = line, tokenColumn = column): Token => {
 		const token = { kind, value, line: tokenLine + lineOffset, column: tokenColumn };
 		tokens.push(token);
@@ -256,10 +306,18 @@ function tokenize(source: string, lineOffset: number): Token[] {
 	return tokens;
 }
 
+/** Returns whether a token can participate in a Ruby name. */
 function isNameToken(token: Token | undefined): boolean {
 	return token?.kind === 'identifier' || token?.kind === 'constant' || token?.kind === 'variable';
 }
 
+/**
+ * Reads a possibly namespaced constant or variable name.
+ *
+ * @param tokens Token stream containing the name.
+ * @param start Index of the first name component.
+ * @returns The qualified name and the index immediately after it.
+ */
 function readQualifiedName(tokens: Token[], start: number): { name: string; next: number } {
 	let name = tokens[start]?.value ?? '';
 	let next = start + 1;
@@ -270,10 +328,17 @@ function readQualifiedName(tokens: Token[], start: number): { name: string; next
 	return { name, next };
 }
 
+/** Returns whether a token terminates a Ruby statement. */
 function isNewline(token: Token | undefined): boolean {
 	return token?.kind === 'newline' || token?.value === ';';
 }
 
+/**
+ * Extracts method parameter names from a parenthesized parameter list.
+ *
+ * Default-value expressions and nested delimiters are skipped when selecting
+ * the declared name for each comma-separated segment.
+ */
 function parseParams(tokens: Token[], start: number): string[] {
 	if (tokens[start]?.value !== '(') {
 		return [];
@@ -307,6 +372,7 @@ function parseParams(tokens: Token[], start: number): string[] {
 	return params;
 }
 
+/** Extracts method parameter names from a line-ending bare parameter list. */
 function parseBareParams(tokens: Token[], start: number): string[] {
 	const params: string[] = [];
 	let segmentStart = start;
@@ -327,6 +393,12 @@ function parseBareParams(tokens: Token[], start: number): string[] {
 	return params;
 }
 
+/**
+ * Infers a simple Ruby type from the tokens on an assignment's right side.
+ *
+ * Supports literals, constructor calls, and methods whose leading YARD
+ * `@return [Type]` comment was registered during this scan.
+ */
 function inferFromTokens(tokens: Token[], methodReturns: Map<string, string>): string | undefined {
 	const useful = tokens.filter(token => token.kind !== 'newline');
 	if (useful.length === 0) {
@@ -368,12 +440,14 @@ function inferFromTokens(tokens: Token[], methodReturns: Map<string, string>): s
 	return undefined;
 }
 
+/** Adds a symbol unless the same name, kind, and line already exists. */
 function addUniqueSymbol(scope: ScopeNode, symbol: SymbolInfo): void {
 	if (!scope.symbols.some(existing => existing.name === symbol.name && existing.kind === symbol.kind && existing.line === symbol.line)) {
 		scope.symbols.push(symbol);
 	}
 }
 
+/** Maps an assignment token to its corresponding symbol kind. */
 function assignmentTarget(token: Token): SymbolKind | undefined {
 	if (token.kind === 'variable') {
 		return token.value.startsWith('@@') ? 'cvar' : 'ivar';
@@ -381,6 +455,12 @@ function assignmentTarget(token: Token): SymbolKind | undefined {
 	return token.kind === 'constant' ? 'constant' : token.kind === 'identifier' ? 'lvar' : undefined;
 }
 
+/**
+ * Distinguishes a `{ ... }` block from a hash or interpolation delimiter.
+ *
+ * The preceding tokens are examined because both constructs close with `}` and
+ * only block braces should create a child scope.
+ */
 function isBlockBrace(tokens: Token[], index: number, lineStart: number): boolean {
 	const previous = tokens[index - 1];
 	if (!previous || previous.line !== tokens[index].line) {
@@ -395,7 +475,15 @@ function isBlockBrace(tokens: Token[], index: number, lineStart: number): boolea
 
 /**
  * Performs a tolerant, dependency-free scan of Ruby source and builds its symbol
- * and lexical-scope tables. lineOffset is used for Ruby embedded in HTML.
+ * and lexical-scope tables.
+ *
+ * Malformed or unfinished constructs are retained as open until the final
+ * source line rather than causing the analyzer to throw.
+ *
+ * @param filePath Path attached to the returned table.
+ * @param source Ruby source text to analyze.
+ * @param lineOffset Number of original-document lines before `source`.
+ * @returns A symbol table whose scopes use original-document line numbers.
  */
 export function analyzeRubySource(filePath: string, source: string, lineOffset = 0): FileSymbolTable {
 	const finalLine = source.replace(/\r\n?/g, '\n').split('\n').length + lineOffset;
@@ -414,6 +502,7 @@ export function analyzeRubySource(filePath: string, source: string, lineOffset =
 	let lineStart = 0;
 	let lineHasCode = false;
 
+	/** Returns the innermost frame that creates a declaration scope. */
 	const activeScope = (): ScopeNode => {
 		for (let index = frames.length - 1; index >= 0; index--) {
 			if (frames[index].createsScope) {
@@ -422,6 +511,7 @@ export function analyzeRubySource(filePath: string, source: string, lineOffset =
 		}
 		return root;
 	};
+	/** Consumes a contiguous comment block only when it directly precedes `line`. */
 	const consumeComment = (line: number): string | undefined => {
 		if (!pendingComments.length || pendingComments[pendingComments.length - 1].line >= line ||
 			pendingComments[pendingComments.length - 1].line < line - 1) {
@@ -661,7 +751,16 @@ export function analyzeRubySource(filePath: string, source: string, lineOffset =
 	return { filePath, rootScope: root };
 }
 
-/** Builds one symbol table from every Ruby script embedded in an HTML document. */
+/**
+ * Builds one symbol table from every Ruby script embedded in an HTML document.
+ *
+ * Only `<script>` elements whose `type` is `text/ruby` are included. Child
+ * scopes retain their line numbers in the surrounding HTML document.
+ *
+ * @param filePath Path of the HTML document.
+ * @param source Complete HTML source text.
+ * @returns Combined top-level table for all embedded Ruby blocks.
+ */
 export function analyzeHtmlRubySource(filePath: string, source: string): FileSymbolTable {
 	const finalLine = source.replace(/\r\n?/g, '\n').split('\n').length;
 	const combined: FileSymbolTable = {

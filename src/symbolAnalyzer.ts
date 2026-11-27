@@ -805,8 +805,21 @@ export function analyzeHtmlRubySource(filePath: string, source: string): FileSym
 	};
 	for (const range of rubyScriptRanges(source)) {
 		const bodyOffset = range.start;
-		const lineOffset = source.slice(0, bodyOffset).replace(/\r\n?/g, '\n').split('\n').length - 1;
+		const prefix = source.slice(0, bodyOffset).replace(/\r\n?/g, '\n');
+		const lineOffset = prefix.split('\n').length - 1;
+		const columnOffset = prefix.length - prefix.lastIndexOf('\n') - 1;
 		const table = analyzeRubySource(filePath, source.slice(range.start, range.end), lineOffset);
+		const adjustColumns = (scope: ScopeNode): void => {
+			for (const symbol of scope.symbols) {
+				if (symbol.line === lineOffset + 1) {
+					symbol.column += columnOffset;
+				}
+			}
+			for (const child of scope.children) {
+				adjustColumns(child);
+			}
+		};
+		adjustColumns(table.rootScope);
 		combined.rootScope.symbols.push(...table.rootScope.symbols);
 		combined.rootScope.children.push(...table.rootScope.children);
 	}

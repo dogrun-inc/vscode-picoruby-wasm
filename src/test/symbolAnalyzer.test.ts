@@ -378,4 +378,25 @@ testSuite('Symbol analyzer', () => {
 		assert.deepStrictEqual(table.rootScope.children.map(scope => scope.name), ['Executable']);
 		assert.strictEqual(findSymbol(table.rootScope, 'DataType'), undefined);
 	});
+
+	test('preserves embedded Ruby columns in the surrounding HTML', () => {
+		const source = [
+			'<div><script data-example="class Inline" type="text/ruby">  class Inline < Base',
+			'  def call(argument)',
+			'  end',
+			'end</script></div>'
+		].join('\n');
+		const table = analyzeHtmlRubySource('inline.html', source);
+		const inline = table.rootScope.symbols.find(symbol => symbol.name === 'Inline');
+		const inlineScope = child(table.rootScope, 'class', 'Inline');
+		const call = inlineScope.symbols.find(symbol => symbol.name === 'call');
+		const param = child(inlineScope, 'method', 'call').symbols.find(symbol => symbol.name === 'argument');
+
+		assert.strictEqual(inline?.line, 1);
+		assert.strictEqual(inline?.column, source.lastIndexOf('class Inline') + 'class '.length);
+		assert.strictEqual(call?.line, 2);
+		assert.strictEqual(call?.column, 6);
+		assert.strictEqual(param?.line, 2);
+		assert.strictEqual(param?.column, 11);
+	});
 });

@@ -348,7 +348,7 @@ testSuite('Symbol analyzer', () => {
 		assert.strictEqual(table.rootScope.endLine, 7);
 	});
 
-	test('ignores HTML scripts without Ruby types and tolerates multiline raw text', () => {
+	test('indexes supported Ruby script types and ignores missing types', () => {
 		const table = analyzeHtmlRubySource('scripts.html', [
 			'<script>def ignored_without_type; end</script>',
 			'<script type=text/picoruby>def ignored_other_type; end</script>',
@@ -360,6 +360,22 @@ testSuite('Symbol analyzer', () => {
 
 		assert.strictEqual(table.rootScope.startLine, 1);
 		assert.strictEqual(table.rootScope.endLine, 6);
-		assert.deepStrictEqual(table.rootScope.children.map(scope => scope.name), ['Embedded']);
+		assert.deepStrictEqual(table.rootScope.children.map(scope => scope.name), ['ignored_other_type', 'Embedded']);
+	});
+
+	test('ignores script-looking text outside executable Ruby scripts', () => {
+		const table = analyzeHtmlRubySource('contexts.html', [
+			'<!-- <script type="text/ruby">class Commented; end</script> -->',
+			'<textarea><script type="text/ruby">class Textarea; end</script></textarea>',
+			'<style><script type="text/ruby">class Styled; end</script></style>',
+			'<div data-template="<script type=&quot;text/ruby&quot;>class Attribute; end</script>">template</div>',
+			'<script data-type="text/ruby">class DataType; end</script>',
+			'<script type="text/ruby-extra">class Prefix; end</script>',
+			'<script type="text/picoruby">class Executable; end</script>',
+			'<plaintext><script type="text/ruby">class Plaintext; end</script>'
+		].join('\n'));
+
+		assert.deepStrictEqual(table.rootScope.children.map(scope => scope.name), ['Executable']);
+		assert.strictEqual(findSymbol(table.rootScope, 'DataType'), undefined);
 	});
 });

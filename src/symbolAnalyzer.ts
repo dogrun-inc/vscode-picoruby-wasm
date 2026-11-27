@@ -1,3 +1,5 @@
+import { rubyScriptRanges } from './htmlRubyScanner';
+
 /** Kinds of Ruby definitions and assignments retained by the analyzer. */
 export type SymbolKind = 'class' | 'module' | 'method' | 'ivar' | 'cvar' | 'lvar' | 'constant' | 'param';
 
@@ -801,17 +803,10 @@ export function analyzeHtmlRubySource(filePath: string, source: string): FileSym
 			children: []
 		}
 	};
-	const scriptPattern = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
-	let match: RegExpExecArray | null;
-	while ((match = scriptPattern.exec(source))) {
-		const attributes = match[1];
-		const type = /\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i.exec(attributes);
-		if ((type?.[1] ?? type?.[2] ?? type?.[3])?.trim().toLowerCase() !== 'text/ruby') {
-			continue;
-		}
-		const bodyOffset = match.index + match[0].indexOf(match[2]);
+	for (const range of rubyScriptRanges(source)) {
+		const bodyOffset = range.start;
 		const lineOffset = source.slice(0, bodyOffset).replace(/\r\n?/g, '\n').split('\n').length - 1;
-		const table = analyzeRubySource(filePath, match[2], lineOffset);
+		const table = analyzeRubySource(filePath, source.slice(range.start, range.end), lineOffset);
 		combined.rootScope.symbols.push(...table.rootScope.symbols);
 		combined.rootScope.children.push(...table.rootScope.children);
 	}

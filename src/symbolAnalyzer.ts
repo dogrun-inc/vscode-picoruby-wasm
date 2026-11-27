@@ -161,15 +161,30 @@ function tokenize(source: string, lineOffset: number): Token[] {
 			index++;
 			column++;
 			while (index < source.length) {
-				if (source[index] === '\r' || source[index] === '\n') {
-					break;
-				}
-				if (source[index] === '\\') {
-					index += Math.min(2, source.length - index);
-					column += 2;
+				const current = source[index];
+				if (current === '\\') {
+					index++;
+					column++;
+					if (index >= source.length) {
+						continue;
+					}
+					if (source[index] === '\r' || source[index] === '\n') {
+						index += source[index] === '\r' && source[index + 1] === '\n' ? 2 : 1;
+						line++;
+						column = 0;
+					} else {
+						index++;
+						column++;
+					}
 					continue;
 				}
-				const current = source[index++];
+				if (current === '\r' || current === '\n') {
+					index += current === '\r' && source[index + 1] === '\n' ? 2 : 1;
+					line++;
+					column = 0;
+					continue;
+				}
+				index++;
 				column++;
 				if (current === quote) {
 					break;

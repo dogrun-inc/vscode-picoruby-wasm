@@ -182,6 +182,35 @@ testSuite('Symbol analyzer', () => {
 		assert.strictEqual(record.symbols.find(symbol => symbol.name === 'LIMIT')?.kind, 'constant');
 	});
 
+	test('keeps multiline strings opaque through LF, CRLF, and escaped newlines', () => {
+		const source = [
+			'def render',
+			'  first = "plain',
+			'    end',
+			'    def fake"',
+			'  second = \'crlf',
+			'    end\'',
+			'  third = "continued\\',
+			'    end still quoted"',
+			'  fourth = "escaped \\"end\\" text"',
+			'  @after = 1',
+			'end'
+		].join('\r\n');
+		const table = analyzeRubySource('multiline-string.rb', source);
+		const method = child(table.rootScope, 'method', 'render');
+
+		assert.deepStrictEqual(method.symbols.map(symbol => symbol.name), [
+			'first',
+			'second',
+			'third',
+			'fourth',
+			'@after'
+		]);
+		assert.ok(method.symbols.every(symbol => symbol.inferredType === 'String' || symbol.inferredType === 'Integer'));
+		assert.strictEqual(method.endLine, 11);
+		assert.strictEqual(method.children.length, 0);
+	});
+
 	test('handles control structures without creating local scopes', () => {
 		const source = [
 			'def process(values)',

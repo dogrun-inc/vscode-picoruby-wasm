@@ -142,8 +142,9 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
     "test:vscode": "vscode-test",
+    "test:symbols": "jest out/test/symbolAnalyzer.test.js",
     "test:webview": "jest src/test/webviewRuntime.test.js",
-    "test": "vscode-test && npm run test:webview"
+    "test": "vscode-test && npm run test:symbols && npm run test:webview"
   },
   "jest": {
     "modulePathIgnorePatterns": [

@@ -5,13 +5,16 @@ import { registerPicoRubyWasmDebugging } from './debug/adapterFactory';
 import { setPicoRubyWasmExtensionContext } from './debug/session';
 import { exportPicoRubyMrbHtml, exportPicoRubySingleHtml } from './exporter';
 import { PicoRubyHoverProvider } from './hoverProvider';
+import { WorkspaceIndex } from './workspaceIndex';
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
 	console.log('PicoRuby WASM extension is now active.');
 	setPicoRubyWasmExtensionContext(context);
 	const hoverProvider = new PicoRubyHoverProvider();
+	const workspaceIndex = new WorkspaceIndex();
 
 	context.subscriptions.push(
+		workspaceIndex,
 		hoverProvider,
 		vscode.languages.registerHoverProvider({ language: 'ruby' }, hoverProvider),
 		vscode.languages.registerHoverProvider({ language: 'html' }, hoverProvider),
@@ -23,6 +26,7 @@ export function activate(context: vscode.ExtensionContext) {
 		registerPicoRubyCompletionProvider(),
 		registerPicoRubyWasmDebugging(context)
 	);
+	await workspaceIndex.initialize();
 }
 
 export function deactivate() {}

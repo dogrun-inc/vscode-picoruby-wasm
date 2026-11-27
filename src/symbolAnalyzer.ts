@@ -198,19 +198,32 @@ function tokenize(source: string, lineOffset: number): Token[] {
 			column++;
 			let characterClass = false;
 			while (index < source.length) {
-				const current = source[index++];
-				column++;
+				const current = source[index];
 				if (current === '\r' || current === '\n') {
+					index += current === '\r' && source[index + 1] === '\n' ? 2 : 1;
 					line++;
 					column = 0;
-					break;
+					continue;
 				}
 				if (current === '\\') {
-					if (index < source.length) {
+					index++;
+					column++;
+					if (index >= source.length) {
+						continue;
+					}
+					if (source[index] === '\r' || source[index] === '\n') {
+						index += source[index] === '\r' && source[index + 1] === '\n' ? 2 : 1;
+						line++;
+						column = 0;
+					} else {
 						index++;
 						column++;
 					}
-				} else if (current === '[') {
+					continue;
+				}
+				index++;
+				column++;
+				if (current === '[') {
 					characterClass = true;
 				} else if (current === ']') {
 					characterClass = false;

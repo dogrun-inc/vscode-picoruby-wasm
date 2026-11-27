@@ -211,6 +211,34 @@ testSuite('Symbol analyzer', () => {
 		assert.strictEqual(method.children.length, 0);
 	});
 
+	test('keeps multiline regular expressions opaque through LF, CRLF, and escaped newlines', () => {
+		const source = [
+			'def match',
+			'  first = /plain',
+			'    end',
+			'    def fake/im',
+			'  second = /continued\\',
+			'    end still quoted/x',
+			'  third = /class[\\/]end',
+			'    def still_quoted/',
+			'  @after = 1',
+			'end'
+		].join('\r\n');
+		const table = analyzeRubySource('multiline-regexp.rb', source);
+		const method = child(table.rootScope, 'method', 'match');
+
+		assert.deepStrictEqual(method.symbols.map(symbol => symbol.name), [
+			'first',
+			'second',
+			'third',
+			'@after'
+		]);
+		assert.strictEqual(method.endLine, 10);
+		assert.strictEqual(method.children.length, 0);
+		assert.strictEqual(method.symbols.find(symbol => symbol.name === 'fake'), undefined);
+		assert.strictEqual(method.symbols.find(symbol => symbol.name === 'still_quoted'), undefined);
+	});
+
 	test('handles control structures without creating local scopes', () => {
 		const source = [
 			'def process(values)',
